@@ -55,15 +55,15 @@ pub fn parse_item_queries(raw: &[String]) -> Vec<ItemQuery> {
             let mut id = entry.clone();
             let mut nbt_query = None;
 
-            if let Some(start) = entry.find('{') {
-                if let Some(end) = entry.rfind('}') {
-                    id = entry[..start].to_string();
-                    let nbt_str = &entry[start..=end];
-                    if !nbt_str.is_empty() {
-                        match valence_nbt::snbt::from_snbt_str(nbt_str) {
-                            Ok(parsed) => nbt_query = Some(parsed),
-                            Err(e) => eprintln!("Failed to parse SNBT '{}': {}", nbt_str, e),
-                        }
+            if let Some(start) = entry.find('{')
+                && let Some(end) = entry.rfind('}')
+            {
+                id = entry[..start].to_string();
+                let nbt_str = &entry[start..=end];
+                if !nbt_str.is_empty() {
+                    match valence_nbt::snbt::from_snbt_str(nbt_str) {
+                        Ok(parsed) => nbt_query = Some(parsed),
+                        Err(e) => eprintln!("Failed to parse SNBT '{nbt_str}': {e}"),
                     }
                 }
             }
@@ -100,7 +100,7 @@ fn main() {
         .map(|path| process_region(path, &queries, &args))
         .sum();
 
-    println!("Total matches: {}", total);
+    println!("Total matches: {total}");
     println!("Took {:?}", start.elapsed());
 }
 
@@ -117,7 +117,7 @@ fn collect_region_files(region_dir: &PathBuf) -> Result<Vec<PathBuf>, String> {
         match entry {
             Ok(dir_entry) => {
                 let path = dir_entry.path();
-                if path.extension().map_or(false, |ext| ext == "mca") {
+                if path.extension().is_some_and(|ext| ext == "mca") {
                     region_files.push(path);
                 }
             }
@@ -143,25 +143,24 @@ fn process_region(path: &PathBuf, queries: &[ItemQuery], args: &Args) -> usize {
 
     for cy in 0..REGION_SIZE_IN_CHUNK {
         for cx in 0..REGION_SIZE_IN_CHUNK {
-            if let Ok(Some(chunk)) = region.get_chunk(cx, cy) {
-                if let Ok(decompressed) = chunk.decompress() {
-                    let mut cursor = Cursor::new(decompressed.as_slice());
-                    if let Ok(nbt) = simdnbt::borrow::read(&mut cursor) {
-                        if let Some(block_entities) = nbt
-                            .unwrap()
-                            .list("block_entities")
-                            .and_then(|l| l.compounds())
-                        {
-                            for be in block_entities {
-                                let id = be.string("id").unwrap().to_string();
-                                let x = be.int("x").unwrap();
-                                let y = be.int("y").unwrap();
-                                let z = be.int("z").unwrap();
-                                if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
-                                    for item in items {
-                                        count += count_matching_item(&id, &item, queries, args, (x, y, z));
-                                    }
-                                }
+            if let Ok(Some(chunk)) = region.get_chunk(cx, cy)
+                && let Ok(decompressed) = chunk.decompress()
+            {
+                let mut cursor = Cursor::new(decompressed.as_slice());
+                if let Ok(nbt) = simdnbt::borrow::read(&mut cursor)
+                    && let Some(block_entities) = nbt
+                        .unwrap()
+                        .list("block_entities")
+                        .and_then(|l| l.compounds())
+                {
+                    for be in block_entities {
+                        let id = be.string("id").unwrap().to_string();
+                        let x = be.int("x").unwrap();
+                        let y = be.int("y").unwrap();
+                        let z = be.int("z").unwrap();
+                        if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
+                            for item in items {
+                                count += count_matching_item(&id, &item, queries, args, (x, y, z));
                             }
                         }
                     }
@@ -218,13 +217,17 @@ fn nbt_matches_query(item: &Value, query: &Value) -> bool {
     match (item, query) {
         (Value::Compound(item_map), Value::Compound(query_map)) => {
             query_map.iter().all(|(key, query_value)| {
-                item_map.get(key).map_or(false, |item_value| nbt_matches_query(item_value, query_value))
+                item_map
+                    .get(key)
+                    .is_some_and(|item_value| nbt_matches_query(item_value, query_value))
             })
         }
         (Value::List(item_list), Value::List(query_list)) => {
             // For lists, ensure each element in the query list is present in the item list.
             query_list.iter().all(|query_elem| {
-                item_list.iter().any(|item_elem| nbt_matches_query(&item_elem.to_value(), &query_elem.to_value()))
+                item_list.iter().any(|item_elem| {
+                    nbt_matches_query(&item_elem.to_value(), &query_elem.to_value())
+                })
             })
         }
         _ => item == query,
