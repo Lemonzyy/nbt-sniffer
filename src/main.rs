@@ -12,6 +12,7 @@ use clap::Parser;
 use cli::CliArgs;
 use conversion::convert_simdnbt_to_valence;
 use counter::Counter;
+use mc_nbt_scanner::nbt_is_subset;
 use mca::RegionReader;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use valence_nbt::Value;
@@ -289,32 +290,5 @@ fn print_match(
         println!("[{source_name} @ {x} {y} {z}] {count}x {id} NBT={snbt}");
     } else if args.show_coords {
         println!("[{source_name} @ {x} {y} {z}] {count}x {id}");
-    }
-}
-
-/// Returns `true` if `subset` is entirely contained within `superset`.
-/// Compounds still require key-by-key matching; lists are treated as unordered sets.
-fn nbt_is_subset(superset: &Value, subset: &Value) -> bool {
-    match (superset, subset) {
-        // Both compounds: every (key → sub_val) must match in sup_map
-        (Value::Compound(sup_map), Value::Compound(sub_map)) => {
-            sub_map.iter().all(|(field, sub_val)| {
-                sup_map
-                    .get(field)
-                    .map_or(false, |sup_val| nbt_is_subset(sup_val, sub_val))
-            })
-        }
-
-        // Lists as unordered: each element in subset_list must match *some* element in superset_list
-        (Value::List(superset_list), Value::List(subset_list)) => {
-            subset_list.iter().all(|pattern_elem| {
-                superset_list
-                    .iter()
-                    .any(|candidate| nbt_is_subset(&candidate.to_value(), &pattern_elem.to_value()))
-            })
-        }
-
-        // Everything else: require exact equality
-        _ => superset == subset,
     }
 }
