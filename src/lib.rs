@@ -178,6 +178,8 @@ pub fn process_region_file(
                 let y = be.int("y").unwrap();
                 let z = be.int("z").unwrap();
 
+                let mut be_counter = Counter::new();
+
                 if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
                     items
                         .into_iter()
@@ -190,13 +192,26 @@ pub fn process_region_file(
                                 .compound("components")
                                 .map(|comp| convert_simdnbt_to_valence_nbt(&comp));
 
-                            counter.add(id.clone(), nbt_components.as_ref(), count);
-
-                            if cli_args.show_coords || cli_args.show_nbt {
-                                print_match(&source_id, (x, y, z), &item, count, cli_args);
-                            }
+                            be_counter.add(id.clone(), nbt_components.as_ref(), count);
                         });
                 }
+
+                if cli_args.per_source_summary && !be_counter.is_empty() {
+                    println!("[{source_id} @ {x} {y} {z}]:",);
+                    for (item_key, count) in be_counter.detailed_counts() {
+                        if cli_args.show_nbt {
+                            if let Some(snbt) = &item_key.components_snbt {
+                                println!("\t{count}x {} {snbt}", item_key.id);
+                            } else {
+                                println!("\t{count}x {}", item_key.id);
+                            }
+                        } else {
+                            println!("\t{count}x {}", item_key.id);
+                        }
+                    }
+                }
+
+                counter.merge(&be_counter);
             }
         }
     }
@@ -220,24 +235,6 @@ fn item_matches(item: &simdnbt::borrow::NbtCompound, queries: &[ItemFilter]) -> 
         }
     }
     false
-}
-
-fn print_match(
-    source_name: &str,
-    source_position: (i32, i32, i32),
-    item: &simdnbt::borrow::NbtCompound,
-    count: u64,
-    args: &CliArgs,
-) {
-    let id = item.string("id").unwrap();
-    let (x, y, z) = source_position;
-
-    if args.show_nbt {
-        let snbt = valence_nbt::snbt::to_snbt_string(&convert_simdnbt_to_valence_nbt(item));
-        println!("[{source_name} @ {x} {y} {z}] {count}x {id} NBT={snbt}");
-    } else if args.show_coords {
-        println!("[{source_name} @ {x} {y} {z}] {count}x {id}");
-    }
 }
 
 /// Returns `true` if `subset` is entirely contained within `superset`.

@@ -39,13 +39,13 @@ pub struct CliArgs {
     #[arg(long)]
     pub by_nbt: bool,
 
-    /// Also print each matching item's full NBT
+    /// Show full NBT data in item summaries
     #[arg(long)]
     pub show_nbt: bool,
 
-    /// Also output the coordinates of each matching item
+    /// Print per-source item summaries instead of only global total
     #[arg(long)]
-    pub show_coords: bool,
+    pub per_source_summary: bool,
 
     /// Increase output verbosity
     #[arg(short, long)]

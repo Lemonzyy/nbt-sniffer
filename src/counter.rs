@@ -4,8 +4,8 @@ use valence_nbt::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ItemKey {
-    id: String,
-    components_snbt: Option<String>,
+    pub id: String,
+    pub components_snbt: Option<String>,
 }
 
 impl ItemKey {
@@ -40,6 +40,10 @@ impl Counter {
     pub fn add(&mut self, id: String, components_nbt: Option<&Value>, count: u64) {
         let key = ItemKey::new(id, components_nbt);
         *self.counts.entry(key).or_insert(0) += count;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.counts.iter().all(|(_, &count)| count == 0)
     }
 
     pub fn merge(&mut self, other: &Self) {
