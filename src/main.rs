@@ -1,6 +1,7 @@
 use clap::Parser;
 use mc_nbt_scanner::{
-    cli::CliArgs, counter::Counter, get_region_files, parse_item_args, process_region_file,
+    cli::CliArgs, counter::Counter, escape_nbt_string, get_region_files, parse_item_args,
+    process_region_file,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::time::Instant;
@@ -66,7 +67,8 @@ fn main() {
             for (nbt, count) in counts {
                 println!(
                     "\t- {count}x {}",
-                    nbt.unwrap_or_else(|| "No NBT".to_string())
+                    nbt.map(|n| escape_nbt_string(&n))
+                        .unwrap_or_else(|| "No NBT".to_string())
                 );
             }
         }

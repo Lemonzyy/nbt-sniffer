@@ -2,6 +2,8 @@ use std::{collections::HashMap, fmt};
 
 use valence_nbt::Value;
 
+use crate::escape_nbt_string;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ItemKey {
     pub id: String,
@@ -20,7 +22,7 @@ impl ItemKey {
 impl fmt::Display for ItemKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.components_snbt {
-            Some(snbt) => write!(f, "{} {snbt}", self.id),
+            Some(snbt) => write!(f, "{} {}", self.id, escape_nbt_string(snbt)),
             None => write!(f, "{}", self.id),
         }
     }

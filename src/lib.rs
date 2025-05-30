@@ -207,6 +207,7 @@ pub fn process_region_file(
                     for (item_key, count) in items {
                         if cli_args.show_nbt {
                             if let Some(snbt) = &item_key.components_snbt {
+                                let snbt = escape_nbt_string(snbt);
                                 println!("\t- {count}x {} {snbt}", item_key.id);
                             } else {
                                 println!("\t- {count}x {}", item_key.id);
@@ -286,4 +287,18 @@ pub fn nbt_is_subset(superset: &Value, subset: &Value) -> bool {
         // Everything else: exact equality
         _ => superset == subset,
     }
+}
+
+pub fn escape_nbt_string(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| match c {
+            '\\' => Some("\\\\".to_string()),
+            '\n' => Some("\\n".to_string()),
+            '\r' => Some("\\r".to_string()),
+            '\t' => Some("\\t".to_string()),
+            //'\"' => Some("\\\"".to_string()),
+            c if c.is_control() => Some(format!("\\u{:04x}", c as u32)),
+            _ => Some(c.to_string()),
+        })
+        .collect::<String>()
 }
