@@ -6,6 +6,7 @@ use clap::{ArgGroup, Parser};
 use conversion::convert_simdnbt_to_valence;
 use mca::RegionReader;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use valence_nbt::Value;
 
 const REGION_SIZE_IN_CHUNK: usize = 32;
 
@@ -43,7 +44,7 @@ struct Args {
 #[derive(Debug)]
 pub struct ItemQuery {
     pub id: String,
-    pub nbt_query: Option<valence_nbt::Value>,
+    pub nbt_query: Option<Value>,
 }
 
 /// Parse raw CLI `item` arguments into `ItemQuery` structs
@@ -158,7 +159,7 @@ fn process_region(path: &PathBuf, queries: &[ItemQuery], args: &Args) -> usize {
                                 let z = be.int("z").unwrap();
                                 if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
                                     for item in items {
-                                        count += match_item(&id, &item, queries, args, (x, y, z));
+                                        count += count_matching_item(&id, &item, queries, args, (x, y, z));
                                     }
                                 }
                             }
@@ -172,7 +173,7 @@ fn process_region(path: &PathBuf, queries: &[ItemQuery], args: &Args) -> usize {
     count
 }
 
-fn match_item(
+fn count_matching_item(
     source: &str,
     item: &simdnbt::borrow::NbtCompound,
     queries: &[ItemQuery],
@@ -184,44 +185,24 @@ fn match_item(
 
     let mut valence_item = None;
 
-    let mut matched = false;
-    if queries.is_empty() {
-        matched = true;
-    } else {
-        for q in queries {
-            if q.id == id {
-                matched = true;
-                if let Some(ref nbt_q) = q.nbt_query {
-                    valence_item = Some(convert_simdnbt_to_valence(item));
-
-                    if let Some(valence_nbt::Value::Compound(ref item_compound)) = valence_item {
-                        if let valence_nbt::Value::Compound(query_compound) = nbt_q {
-                            for (key, value) in query_compound.iter() {
-                                if let Some(item_value) = item_compound.get(key) {
-                                    if item_value != value {
-                                        matched = false;
-                                        break;
-                                    }
-                                } else {
-                                    matched = false;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                if matched {
-                    break;
-                }
-            }
+    let matched = queries.iter().any(|q| {
+        if q.id != id {
+            return false;
         }
-    }
 
-    if matched {
+        if let Some(ref nbt_q) = q.nbt_query {
+            let val_item = valence_item.get_or_insert_with(|| convert_simdnbt_to_valence(item));
+            nbt_matches_query(val_item, nbt_q)
+        } else {
+            true
+        }
+    });
+
+    if matched || queries.is_empty() {
         let (x, y, z) = coordinates;
         if args.with_nbt {
-            let valence_item = valence_item.unwrap_or_else(|| convert_simdnbt_to_valence(item));
-            let snbt = valence_nbt::snbt::to_snbt_string(&valence_item);
+            let val_item = valence_item.unwrap_or_else(|| convert_simdnbt_to_valence(item));
+            let snbt = valence_nbt::snbt::to_snbt_string(&val_item);
             println!("[{source} @ {x} {y} {z}] {count}x {id} NBT={snbt}");
         } else if args.with_coords {
             println!("[{source} @ {x} {y} {z}] {count}x {id}");
@@ -229,5 +210,23 @@ fn match_item(
         count as usize
     } else {
         0
+    }
+}
+
+/// Recursively checks if all key-value pairs in `query` are present in `item`.
+fn nbt_matches_query(item: &Value, query: &Value) -> bool {
+    match (item, query) {
+        (Value::Compound(item_map), Value::Compound(query_map)) => {
+            query_map.iter().all(|(key, query_value)| {
+                item_map.get(key).map_or(false, |item_value| nbt_matches_query(item_value, query_value))
+            })
+        }
+        (Value::List(item_list), Value::List(query_list)) => {
+            // For lists, ensure each element in the query list is present in the item list.
+            query_list.iter().all(|query_elem| {
+                item_list.iter().any(|item_elem| nbt_matches_query(&item_elem.to_value(), &query_elem.to_value()))
+            })
+        }
+        _ => item == query,
     }
 }
