@@ -16,6 +16,33 @@ use valence_nbt::Value;
 
 const REGION_SIZE_IN_CHUNK: usize = 32;
 
+fn main() {
+    let args = CliArgs::parse();
+    let queries = if args.all {
+        Vec::new()
+    } else {
+        parse_item_args(&args.items)
+    };
+
+    let region_files = match get_region_files(&args.world_path.join("region")) {
+        Ok(files) => files,
+        Err(err) => {
+            eprintln!("{err}");
+            return;
+        }
+    };
+
+    let start = Instant::now();
+
+    let total: u64 = region_files
+        .par_iter()
+        .map(|path| count_items_in_region_file(path, &queries, &args))
+        .sum();
+
+    println!("Total matches: {total}");
+    println!("Took {:?}", start.elapsed());
+}
+
 /// Represents a query for an item and its optional NBT filters
 #[derive(Debug)]
 pub struct ItemFilter {
@@ -57,33 +84,6 @@ pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
             }
         })
         .collect()
-}
-
-fn main() {
-    let args = CliArgs::parse();
-    let queries = if args.all {
-        Vec::new()
-    } else {
-        parse_item_args(&args.items)
-    };
-
-    let region_files = match get_region_files(&args.world_path.join("region")) {
-        Ok(files) => files,
-        Err(err) => {
-            eprintln!("{err}");
-            return;
-        }
-    };
-
-    let start = Instant::now();
-
-    let total: u64 = region_files
-        .par_iter()
-        .map(|path| count_items_in_region_file(path, &queries, &args))
-        .sum();
-
-    println!("Total matches: {total}");
-    println!("Took {:?}", start.elapsed());
 }
 
 fn get_region_files(region_dir: &Path) -> Result<Vec<PathBuf>, String> {
