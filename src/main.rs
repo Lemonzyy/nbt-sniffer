@@ -13,7 +13,7 @@ const REGION_SIZE_IN_CHUNK: usize = 32;
 /// Count items in a Minecraft world (1.21.5+), with optional per-item NBT filters and coordinates
 #[derive(Parser, Debug)]
 #[command(group(ArgGroup::new("mode").required(true).args(["all", "items"])))]
-struct Args {
+struct CliArgs {
     #[arg(short, long, value_name = "PATH")]
     world_path: PathBuf,
 
@@ -27,7 +27,7 @@ struct Args {
         value_name = "ITEM_QUERY",
         group = "mode",
         num_args = 1..,
-        long_help = "Specify items to count, each in the form: ITEM_ID[:key=value,...]\n\nExamples:\n\n--item minecraft:diamond\n--item minecraft:shulker_box:CustomName=MyBox,Lock=secret"
+        long_help = "Specify items to count, each in the form: ITEM_ID{nbt}\n\nExamples:\n\n--item minecraft:diamond\n--item minecraft:shulker_box{components:{\"minecraft:custom_name\":\"Portable Chest\"}}"
     )]
     items: Vec<String>,
 
@@ -42,15 +42,16 @@ struct Args {
 
 /// Represents a query for an item and its optional NBT filters
 #[derive(Debug)]
-pub struct ItemQuery {
+pub struct ItemFilter {
     pub id: String,
-    pub nbt_query: Option<Value>,
+    pub required_nbt: Option<Value>,
 }
 
 /// Parse raw CLI `item` arguments into `ItemQuery` structs
-/// Each entry is of form `ITEM_ID[namespace:key=value,...]`
-pub fn parse_item_queries(raw: &[String]) -> Vec<ItemQuery> {
-    raw.iter()
+/// Each entry is of form `ITEM_ID{nbt}`
+pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
+    raw_items
+        .iter()
         .map(|entry| {
             let mut id = entry.clone();
             let mut nbt_query = None;
@@ -72,20 +73,23 @@ pub fn parse_item_queries(raw: &[String]) -> Vec<ItemQuery> {
                 id = format!("minecraft:{id}");
             }
 
-            ItemQuery { id, nbt_query }
+            ItemFilter {
+                id,
+                required_nbt: nbt_query,
+            }
         })
         .collect()
 }
 
 fn main() {
-    let args = Args::parse();
+    let args = CliArgs::parse();
     let queries = if args.all {
         Vec::new()
     } else {
-        parse_item_queries(&args.items)
+        parse_item_args(&args.items)
     };
 
-    let region_files = match collect_region_files(&args.world_path.join("region")) {
+    let region_files = match get_region_files(&args.world_path.join("region")) {
         Ok(files) => files,
         Err(err) => {
             eprintln!("{err}");
@@ -97,14 +101,14 @@ fn main() {
 
     let total: usize = region_files
         .par_iter()
-        .map(|path| process_region(path, &queries, &args))
+        .map(|path| count_items_in_region_file(path, &queries, &args))
         .sum();
 
     println!("Total matches: {total}");
     println!("Took {:?}", start.elapsed());
 }
 
-fn collect_region_files(region_dir: &PathBuf) -> Result<Vec<PathBuf>, String> {
+fn get_region_files(region_dir: &PathBuf) -> Result<Vec<PathBuf>, String> {
     let entries = std::fs::read_dir(region_dir).map_err(|e| {
         format!(
             "Error: failed to read region directory '{}': {e}",
@@ -133,8 +137,12 @@ fn collect_region_files(region_dir: &PathBuf) -> Result<Vec<PathBuf>, String> {
     Ok(region_files)
 }
 
-fn process_region(path: &PathBuf, queries: &[ItemQuery], args: &Args) -> usize {
-    let data = std::fs::read(path).unwrap_or_default();
+fn count_items_in_region_file(
+    region_file_path: &PathBuf,
+    item_queries: &[ItemFilter],
+    cli_args: &CliArgs,
+) -> usize {
+    let data = std::fs::read(region_file_path).unwrap_or_default();
     let region = match RegionReader::new(&data) {
         Ok(r) => r,
         Err(_) => return 0,
@@ -160,7 +168,13 @@ fn process_region(path: &PathBuf, queries: &[ItemQuery], args: &Args) -> usize {
                         let z = be.int("z").unwrap();
                         if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
                             for item in items {
-                                count += count_matching_item(&id, &item, queries, args, (x, y, z));
+                                count += count_matching_item(
+                                    &id,
+                                    (x, y, z),
+                                    &item,
+                                    item_queries,
+                                    cli_args,
+                                );
                             }
                         }
                     }
@@ -173,38 +187,38 @@ fn process_region(path: &PathBuf, queries: &[ItemQuery], args: &Args) -> usize {
 }
 
 fn count_matching_item(
-    source: &str,
+    source_name: &str,
+    source_position: (i32, i32, i32),
     item: &simdnbt::borrow::NbtCompound,
-    queries: &[ItemQuery],
-    args: &Args,
-    coordinates: (i32, i32, i32),
+    queries: &[ItemFilter],
+    args: &CliArgs,
 ) -> usize {
     let id = item.string("id").unwrap().to_string();
     let count = item.int("count").unwrap_or(1);
 
-    let mut valence_item = None;
+    let mut valence_nbt_item = None;
 
     let matched = queries.iter().any(|q| {
         if q.id != id {
             return false;
         }
 
-        if let Some(ref nbt_q) = q.nbt_query {
-            let val_item = valence_item.get_or_insert_with(|| convert_simdnbt_to_valence(item));
-            nbt_matches_query(val_item, nbt_q)
+        if let Some(ref nbt_q) = q.required_nbt {
+            let val_item = valence_nbt_item.get_or_insert_with(|| convert_simdnbt_to_valence(item));
+            nbt_contains_all(val_item, nbt_q)
         } else {
             true
         }
     });
 
     if matched || queries.is_empty() {
-        let (x, y, z) = coordinates;
+        let (x, y, z) = source_position;
         if args.with_nbt {
-            let val_item = valence_item.unwrap_or_else(|| convert_simdnbt_to_valence(item));
+            let val_item = valence_nbt_item.unwrap_or_else(|| convert_simdnbt_to_valence(item));
             let snbt = valence_nbt::snbt::to_snbt_string(&val_item);
-            println!("[{source} @ {x} {y} {z}] {count}x {id} NBT={snbt}");
+            println!("[{source_name} @ {x} {y} {z}] {count}x {id} NBT={snbt}");
         } else if args.with_coords {
-            println!("[{source} @ {x} {y} {z}] {count}x {id}");
+            println!("[{source_name} @ {x} {y} {z}] {count}x {id}");
         }
         count as usize
     } else {
@@ -213,23 +227,23 @@ fn count_matching_item(
 }
 
 /// Recursively checks if all key-value pairs in `query` are present in `item`.
-fn nbt_matches_query(item: &Value, query: &Value) -> bool {
-    match (item, query) {
+fn nbt_contains_all(nbt: &Value, required_nbt: &Value) -> bool {
+    match (nbt, required_nbt) {
         (Value::Compound(item_map), Value::Compound(query_map)) => {
             query_map.iter().all(|(key, query_value)| {
                 item_map
                     .get(key)
-                    .is_some_and(|item_value| nbt_matches_query(item_value, query_value))
+                    .is_some_and(|item_value| nbt_contains_all(item_value, query_value))
             })
         }
         (Value::List(item_list), Value::List(query_list)) => {
             // For lists, ensure each element in the query list is present in the item list.
             query_list.iter().all(|query_elem| {
                 item_list.iter().any(|item_elem| {
-                    nbt_matches_query(&item_elem.to_value(), &query_elem.to_value())
+                    nbt_contains_all(&item_elem.to_value(), &query_elem.to_value())
                 })
             })
         }
-        _ => item == query,
+        _ => nbt == required_nbt,
     }
 }
