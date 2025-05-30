@@ -38,26 +38,31 @@ fn main() {
     match (args.detailed, args.by_id, args.by_nbt) {
         (true, _, _) => {
             println!("Detailed counts (by item + NBT):");
-            for (key, &count) in counter.detailed_counts() {
-                println!("{key}: {count}");
+            let mut counts = counter.detailed_counts().into_iter().collect::<Vec<_>>();
+            counts.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+            for (key, count) in counts {
+                println!("- {key}: {count}");
             }
         }
         (_, true, _) => {
             println!("Counts by item ID:");
-            for (id, count) in counter.total_by_id() {
-                println!("{id}: {count}");
+            let mut counts = counter.total_by_id().into_iter().collect::<Vec<_>>();
+            counts.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+            for (id, count) in counts {
+                println!("- {id}: {count}");
             }
         }
         (_, _, true) => {
             println!("Counts by NBT only:");
-            for (nbt, count) in counter.total_by_nbt() {
-                println!("{}: {count}", nbt.unwrap_or_else(|| "No NBT".to_string()));
+            let mut counts = counter.total_by_nbt().into_iter().collect::<Vec<_>>();
+            counts.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+            for (nbt, count) in counts {
+                println!("- {}: {count}", nbt.unwrap_or_else(|| "No NBT".to_string()));
             }
         }
-        _ => {
-            println!("Total items matched: {}", counter.total());
-        }
+        _ => {}
     }
 
+    println!("Total items matched: {}", counter.total());
     println!("Scan completed in {:?}", start.elapsed());
 }
