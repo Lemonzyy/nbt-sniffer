@@ -197,9 +197,14 @@ pub fn process_region_file(
 
                 if cli_args.per_source_summary && !be_counter.is_empty() {
                     println!("[{source_id} @ {x} {y} {z}]:",);
-                    let mut detailed = be_counter.detailed_counts().into_iter().collect::<Vec<_>>();
-                    detailed.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
-                    for (item_key, count) in detailed {
+
+                    let mut items = be_counter.detailed_counts().iter().collect::<Vec<_>>();
+
+                    items.sort_by(|(a_key, a_count), (b_key, b_count)| {
+                        b_count.cmp(a_count).then_with(|| a_key.id.cmp(&b_key.id))
+                    });
+
+                    for (item_key, count) in items {
                         if cli_args.show_nbt {
                             if let Some(snbt) = &item_key.components_snbt {
                                 println!("\t- {count}x {} {snbt}", item_key.id);

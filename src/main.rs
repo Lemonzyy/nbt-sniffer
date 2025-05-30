@@ -38,26 +38,36 @@ fn main() {
     match (args.detailed, args.by_id, args.by_nbt) {
         (true, _, _) => {
             println!("Detailed counts (by item + NBT):");
-            let mut counts = counter.detailed_counts().into_iter().collect::<Vec<_>>();
-            counts.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+            let mut counts = counter.detailed_counts().iter().collect::<Vec<_>>();
+            counts.sort_by(|(a_key, a_count), (b_key, b_count)| {
+                b_count.cmp(a_count).then_with(|| a_key.id.cmp(&b_key.id))
+            });
+
             for (key, count) in counts {
-                println!("- {key}: {count}");
+                println!("\t- {count}x {key}");
             }
         }
         (_, true, _) => {
             println!("Counts by item ID:");
             let mut counts = counter.total_by_id().into_iter().collect::<Vec<_>>();
-            counts.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+            counts.sort_by(|(a_id, a_count), (b_id, b_count)| {
+                b_count.cmp(a_count).then_with(|| a_id.cmp(b_id))
+            });
             for (id, count) in counts {
-                println!("- {id}: {count}");
+                println!("\t- {count}x {id}");
             }
         }
         (_, _, true) => {
             println!("Counts by NBT only:");
             let mut counts = counter.total_by_nbt().into_iter().collect::<Vec<_>>();
-            counts.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+            counts.sort_by(|(a_nbt, a_count), (b_nbt, b_count)| {
+                b_count.cmp(a_count).then_with(|| a_nbt.cmp(b_nbt))
+            });
             for (nbt, count) in counts {
-                println!("- {}: {count}", nbt.unwrap_or_else(|| "No NBT".to_string()));
+                println!(
+                    "\t- {count}x {}",
+                    nbt.unwrap_or_else(|| "No NBT".to_string())
+                );
             }
         }
         _ => {}
