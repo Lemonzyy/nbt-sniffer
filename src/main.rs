@@ -1,6 +1,9 @@
+mod conversion;
+
 use std::{io::Cursor, path::PathBuf, time::Instant};
 
 use clap::{ArgGroup, Parser};
+use conversion::convert_simdnbt_to_valence;
 use mca::RegionReader;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
@@ -40,23 +43,26 @@ struct Args {
 #[derive(Debug)]
 pub struct ItemQuery {
     pub id: String,
-    pub nbt_query: Option<String>,
+    pub nbt_query: Option<valence_nbt::Value>,
 }
 
 /// Parse raw CLI `item` arguments into `ItemQuery` structs
 /// Each entry is of form `ITEM_ID[namespace:key=value,...]`
 pub fn parse_item_queries(raw: &[String]) -> Vec<ItemQuery> {
-    raw.into_iter()
+    raw.iter()
         .map(|entry| {
             let mut id = entry.clone();
             let mut nbt_query = None;
 
-            if let Some(start) = entry.find('[') {
-                if let Some(end) = entry.rfind(']') {
+            if let Some(start) = entry.find('{') {
+                if let Some(end) = entry.rfind('}') {
                     id = entry[..start].to_string();
-                    let nbt = entry[start + 1..end].to_string();
-                    if !nbt.is_empty() {
-                        nbt_query = Some(nbt);
+                    let nbt_str = &entry[start..=end];
+                    if !nbt_str.is_empty() {
+                        match valence_nbt::snbt::from_snbt_str(nbt_str) {
+                            Ok(parsed) => nbt_query = Some(parsed),
+                            Err(e) => eprintln!("Failed to parse SNBT '{}': {}", nbt_str, e),
+                        }
                     }
                 }
             }
@@ -69,6 +75,7 @@ pub fn parse_item_queries(raw: &[String]) -> Vec<ItemQuery> {
         })
         .collect()
 }
+
 fn main() {
     let args = Args::parse();
     let queries = if args.all {
@@ -145,12 +152,13 @@ fn process_region(path: &PathBuf, queries: &[ItemQuery], args: &Args) -> usize {
                             .and_then(|l| l.compounds())
                         {
                             for be in block_entities {
+                                let id = be.string("id").unwrap().to_string();
                                 let x = be.int("x").unwrap();
                                 let y = be.int("y").unwrap();
                                 let z = be.int("z").unwrap();
                                 if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
                                     for item in items {
-                                        count += match_item(&item, queries, args, (x, y, z));
+                                        count += match_item(&id, &item, queries, args, (x, y, z));
                                     }
                                 }
                             }
@@ -165,17 +173,16 @@ fn process_region(path: &PathBuf, queries: &[ItemQuery], args: &Args) -> usize {
 }
 
 fn match_item(
+    source: &str,
     item: &simdnbt::borrow::NbtCompound,
     queries: &[ItemQuery],
     args: &Args,
     coordinates: (i32, i32, i32),
 ) -> usize {
-    let id = item.string("id").map(|s| s.to_string_lossy().to_string());
-    if id.is_none() {
-        return 0;
-    }
-    let id = id.unwrap();
+    let id = item.string("id").unwrap().to_string();
     let count = item.int("count").unwrap_or(1);
+
+    let mut valence_item = None;
 
     let mut matched = false;
     if queries.is_empty() {
@@ -185,10 +192,22 @@ fn match_item(
             if q.id == id {
                 matched = true;
                 if let Some(ref nbt_q) = q.nbt_query {
-                    let nbt_str = format!("{:?}", item);
+                    valence_item = Some(convert_simdnbt_to_valence(item));
 
-                    if !nbt_str.contains(nbt_q) {
-                        matched = false;
+                    if let Some(valence_nbt::Value::Compound(ref item_compound)) = valence_item {
+                        if let valence_nbt::Value::Compound(query_compound) = nbt_q {
+                            for (key, value) in query_compound.iter() {
+                                if let Some(item_value) = item_compound.get(key) {
+                                    if item_value != value {
+                                        matched = false;
+                                        break;
+                                    }
+                                } else {
+                                    matched = false;
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
                 if matched {
@@ -201,9 +220,11 @@ fn match_item(
     if matched {
         let (x, y, z) = coordinates;
         if args.with_nbt {
-            println!("[{x} {y} {z}] {count}x {id} NBT={item:?}");
+            let valence_item = valence_item.unwrap_or_else(|| convert_simdnbt_to_valence(item));
+            let snbt = valence_nbt::snbt::to_snbt_string(&valence_item);
+            println!("[{source} @ {x} {y} {z}] {count}x {id} NBT={snbt}");
         } else if args.with_coords {
-            println!("[{x} {y} {z}] {count}x {id}");
+            println!("[{source} @ {x} {y} {z}] {count}x {id}");
         }
         count as usize
     } else {
