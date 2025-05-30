@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod conversion;
 pub mod counter;
+pub mod tree;
 
 use std::{
     io::Cursor,
@@ -11,6 +12,7 @@ use cli::CliArgs;
 use conversion::convert_simdnbt_to_valence_nbt;
 use counter::Counter;
 use mca::RegionReader;
+use tree::ItemSummaryNode;
 use valence_nbt::Value;
 
 pub const CHUNK_PER_REGION_SIDE: usize = 32;
@@ -196,26 +198,34 @@ pub fn process_region_file(
                 }
 
                 if cli_args.per_source_summary && !be_counter.is_empty() {
-                    println!("[{source_id} @ {x} {y} {z}]:",);
-
                     let mut items = be_counter.detailed_counts().iter().collect::<Vec<_>>();
 
                     items.sort_by(|(a_key, a_count), (b_key, b_count)| {
                         b_count.cmp(a_count).then_with(|| a_key.id.cmp(&b_key.id))
                     });
 
-                    for (item_key, count) in items {
-                        if cli_args.show_nbt {
-                            if let Some(snbt) = &item_key.components_snbt {
-                                let snbt = escape_nbt_string(snbt);
-                                println!("\t- {count}x {} {snbt}", item_key.id);
+                    let mut children = Vec::new();
+
+                    for (item_key, &count) in items {
+                        children.push(ItemSummaryNode::Item {
+                            id: item_key.id.clone(),
+                            count,
+                            snbt: if cli_args.show_nbt {
+                                item_key
+                                    .components_snbt
+                                    .clone()
+                                    .map(|s| escape_nbt_string(&s))
                             } else {
-                                println!("\t- {count}x {}", item_key.id);
-                            }
-                        } else {
-                            println!("\t- {count}x {}", item_key.id);
-                        }
+                                None
+                            },
+                            children: Vec::new(),
+                        });
                     }
+
+                    let root =
+                        ItemSummaryNode::new_root(format!("[{source_id} @ {x} {y} {z}]"), children);
+
+                    ptree::print_tree(&root).unwrap();
                 }
 
                 counter.merge(&be_counter);

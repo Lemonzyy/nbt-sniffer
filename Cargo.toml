@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 mca = "1.0"
+ptree = "0.5.2"
 rayon = "1.10"
 simdnbt = "0.7"
 valence_nbt = { version = "0.8", features = ["snbt"]}
