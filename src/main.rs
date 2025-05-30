@@ -1,3 +1,4 @@
+mod cli;
 mod conversion;
 
 use std::{
@@ -6,47 +7,14 @@ use std::{
     time::Instant,
 };
 
-use clap::{ArgGroup, Parser};
+use clap::Parser;
+use cli::CliArgs;
 use conversion::convert_simdnbt_to_valence;
 use mca::RegionReader;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use valence_nbt::Value;
 
 const REGION_SIZE_IN_CHUNK: usize = 32;
-
-/// Count items in a Minecraft world (1.21.5+), with optional per-item NBT filters and coordinates
-#[derive(Parser, Debug)]
-#[command(group(ArgGroup::new("mode").required(true).args(["all", "items"])))]
-struct CliArgs {
-    #[arg(short, long, value_name = "PATH")]
-    world_path: PathBuf,
-
-    /// Count all items
-    #[arg(long, group = "mode")]
-    all: bool,
-
-    /// Specify items to count
-    #[arg(
-        long = "item",
-        value_name = "ITEM_QUERY",
-        group = "mode",
-        num_args = 1..,
-        long_help = "Specify items to count, each in the form: ITEM_ID{nbt}\n\nExamples:\n\n--item minecraft:diamond\n--item minecraft:shulker_box{components:{\"minecraft:custom_name\":\"Portable Chest\"}}"
-    )]
-    items: Vec<String>,
-
-    /// Also print each matching item's full NBT blob
-    #[arg(long = "with-nbt")]
-    pub with_nbt: bool,
-
-    /// Also output the coordinates of each matching item
-    #[arg(long)]
-    with_coords: bool,
-
-    /// Increase output verbosity
-    #[arg(short, long)]
-    verbose: bool,
-}
 
 /// Represents a query for an item and its optional NBT filters
 #[derive(Debug)]
