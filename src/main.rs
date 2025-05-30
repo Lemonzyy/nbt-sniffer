@@ -293,25 +293,28 @@ fn print_match(
 }
 
 /// Returns `true` if `subset` is entirely contained within `superset`.
+/// Compounds still require key-by-key matching; lists are treated as unordered sets.
 fn nbt_is_subset(superset: &Value, subset: &Value) -> bool {
     match (superset, subset) {
-        // Compounds: every (key → sub_value) must exist in sup_map with a matching sup_value
+        // Both compounds: every (key → sub_val) must match in sup_map
         (Value::Compound(sup_map), Value::Compound(sub_map)) => {
-            sub_map.iter().all(|(key, sub_value)| {
+            sub_map.iter().all(|(field, sub_val)| {
                 sup_map
-                    .get(key)
-                    .is_some_and(|sup_value| nbt_is_subset(sup_value, sub_value))
+                    .get(field)
+                    .map_or(false, |sup_val| nbt_is_subset(sup_val, sub_val))
             })
         }
 
-        // Lists: each element of sub_list must match SOME element in sup_list
-        (Value::List(sup_list), Value::List(sub_list)) => sub_list.iter().all(|sub_element| {
-            sup_list
-                .iter()
-                .any(|sup_element| nbt_is_subset(&sup_element.to_value(), &sub_element.to_value()))
-        }),
+        // Lists as unordered: each element in subset_list must match *some* element in superset_list
+        (Value::List(superset_list), Value::List(subset_list)) => {
+            subset_list.iter().all(|pattern_elem| {
+                superset_list
+                    .iter()
+                    .any(|candidate| nbt_is_subset(&candidate.to_value(), &pattern_elem.to_value()))
+            })
+        }
 
-        // Primitives or mismatched types must be exactly equal
+        // Everything else: require exact equality
         _ => superset == subset,
     }
 }
