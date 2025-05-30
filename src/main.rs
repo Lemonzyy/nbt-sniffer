@@ -1,5 +1,6 @@
 mod cli;
 mod conversion;
+mod counter;
 
 use std::{
     io::Cursor,
@@ -10,8 +11,9 @@ use std::{
 use clap::Parser;
 use cli::CliArgs;
 use conversion::convert_simdnbt_to_valence;
+use counter::Counter;
 use mca::RegionReader;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use valence_nbt::Value;
 
 const REGION_SIZE_IN_CHUNK: usize = 32;
@@ -34,12 +36,34 @@ fn main() {
 
     let start = Instant::now();
 
-    let total: u64 = region_files
-        .par_iter()
-        .map(|path| count_items_in_region_file(path, &queries, &args))
-        .sum();
+    let counter = region_files
+        .into_par_iter()
+        .map(|path| {
+            let mut c = Counter::new();
+            process_region_file(&path, &queries, &args, &mut c);
+            c
+        })
+        .reduce(Counter::new, |mut a, b| {
+            a.merge(&b);
+            a
+        });
 
-    println!("Total matches: {total}");
+    if args.detailed {
+        for (key, &count) in counter.detailed_counts() {
+            println!("{key}: {count}");
+        }
+    } else if args.by_id {
+        for (id, count) in counter.total_by_id() {
+            println!("{id}: {count}");
+        }
+    } else if args.by_nbt {
+        for (nbt, count) in counter.total_by_nbt() {
+            println!("{}: {count}", nbt.unwrap_or_else(|| "No NBT".to_string()));
+        }
+    } else {
+        println!("Total: {}", counter.total());
+    }
+
     println!("Took {:?}", start.elapsed());
 }
 
@@ -117,18 +141,19 @@ fn get_region_files(region_dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(region_files)
 }
 
-fn count_items_in_region_file(
+fn process_region_file(
     region_file_path: &PathBuf,
     item_queries: &[ItemFilter],
     cli_args: &CliArgs,
-) -> u64 {
+    counter: &mut Counter,
+) {
     let data = match std::fs::read(region_file_path) {
         Ok(d) => d,
         Err(e) => {
             if cli_args.verbose {
                 eprintln!("Failed to read file {}: {e}", region_file_path.display());
             }
-            return 0;
+            return;
         }
     };
 
@@ -141,11 +166,9 @@ fn count_items_in_region_file(
                     region_file_path.display()
                 );
             }
-            return 0;
+            return;
         }
     };
-
-    let mut count = 0;
 
     for cy in 0..REGION_SIZE_IN_CHUNK {
         for cx in 0..REGION_SIZE_IN_CHUNK {
@@ -202,81 +225,93 @@ fn count_items_in_region_file(
             };
 
             for be in block_entities {
-                let id = be.string("id").unwrap().to_string();
+                let source_id = be.string("id").unwrap().to_string();
                 let x = be.int("x").unwrap();
                 let y = be.int("y").unwrap();
                 let z = be.int("z").unwrap();
 
                 if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
-                    for item in items {
-                        count += count_matching_item(&id, (x, y, z), &item, item_queries, cli_args);
-                    }
+                    items
+                        .into_iter()
+                        .filter(|item| item_matches(item, item_queries))
+                        .for_each(|item| {
+                            let id = item.string("id").unwrap().to_string();
+                            let count = item.int("count").unwrap_or(1) as u64;
+
+                            let nbt_components = item
+                                .compound("components")
+                                .map(|comp| convert_simdnbt_to_valence(&comp));
+
+                            counter.add(id.clone(), nbt_components.as_ref(), count);
+
+                            if cli_args.show_coords || cli_args.show_nbt {
+                                print_match(&source_id, (x, y, z), &item, count, cli_args);
+                            }
+                        });
                 }
             }
         }
     }
-
-    count
 }
 
-fn count_matching_item(
+fn item_matches(item: &simdnbt::borrow::NbtCompound, queries: &[ItemFilter]) -> bool {
+    let id = item.string("id").unwrap().to_string();
+    if queries.is_empty() {
+        return true;
+    }
+    for q in queries {
+        if q.id == id {
+            if let Some(ref required) = q.required_nbt {
+                let val = convert_simdnbt_to_valence(item);
+                if nbt_is_subset(&val, required) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn print_match(
     source_name: &str,
     source_position: (i32, i32, i32),
     item: &simdnbt::borrow::NbtCompound,
-    queries: &[ItemFilter],
+    count: u64,
     args: &CliArgs,
-) -> u64 {
-    let id = item.string("id").unwrap().to_string();
-    let count = item.int("count").unwrap_or(1);
+) {
+    let id = item.string("id").unwrap();
+    let (x, y, z) = source_position;
 
-    let mut valence_nbt_item = None;
-
-    let matched = queries.iter().any(|q| {
-        if q.id != id {
-            return false;
-        }
-
-        if let Some(ref nbt_q) = q.required_nbt {
-            let val_item = valence_nbt_item.get_or_insert_with(|| convert_simdnbt_to_valence(item));
-            nbt_contains_all(val_item, nbt_q)
-        } else {
-            true
-        }
-    });
-
-    if matched || queries.is_empty() {
-        let (x, y, z) = source_position;
-        if args.with_nbt {
-            let val_item = valence_nbt_item.unwrap_or_else(|| convert_simdnbt_to_valence(item));
-            let snbt = valence_nbt::snbt::to_snbt_string(&val_item);
-            println!("[{source_name} @ {x} {y} {z}] {count}x {id} NBT={snbt}");
-        } else if args.with_coords {
-            println!("[{source_name} @ {x} {y} {z}] {count}x {id}");
-        }
-        count as u64
-    } else {
-        0
+    if args.show_nbt {
+        let snbt = valence_nbt::snbt::to_snbt_string(&convert_simdnbt_to_valence(item));
+        println!("[{source_name} @ {x} {y} {z}] {count}x {id} NBT={snbt}");
+    } else if args.show_coords {
+        println!("[{source_name} @ {x} {y} {z}] {count}x {id}");
     }
 }
 
-/// Recursively checks if all key-value pairs in `query` are present in `item`.
-fn nbt_contains_all(nbt: &Value, required_nbt: &Value) -> bool {
-    match (nbt, required_nbt) {
-        (Value::Compound(item_map), Value::Compound(query_map)) => {
-            query_map.iter().all(|(key, query_value)| {
-                item_map
+/// Returns `true` if `subset` is entirely contained within `superset`.
+fn nbt_is_subset(superset: &Value, subset: &Value) -> bool {
+    match (superset, subset) {
+        // Compounds: every (key → sub_value) must exist in sup_map with a matching sup_value
+        (Value::Compound(sup_map), Value::Compound(sub_map)) => {
+            sub_map.iter().all(|(key, sub_value)| {
+                sup_map
                     .get(key)
-                    .is_some_and(|item_value| nbt_contains_all(item_value, query_value))
+                    .is_some_and(|sup_value| nbt_is_subset(sup_value, sub_value))
             })
         }
-        (Value::List(item_list), Value::List(query_list)) => {
-            // For lists, ensure each element in the query list is present in the item list.
-            query_list.iter().all(|query_elem| {
-                item_list.iter().any(|item_elem| {
-                    nbt_contains_all(&item_elem.to_value(), &query_elem.to_value())
-                })
-            })
-        }
-        _ => nbt == required_nbt,
+
+        // Lists: each element of sub_list must match SOME element in sup_list
+        (Value::List(sup_list), Value::List(sub_list)) => sub_list.iter().all(|sub_element| {
+            sup_list
+                .iter()
+                .any(|sup_element| nbt_is_subset(&sup_element.to_value(), &sub_element.to_value()))
+        }),
+
+        // Primitives or mismatched types must be exactly equal
+        _ => superset == subset,
     }
 }
