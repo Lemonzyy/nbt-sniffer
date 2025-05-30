@@ -72,3 +72,9 @@ impl Counter {
         &self.counts
     }
 }
+
+impl Default for Counter {
+    fn default() -> Self {
+        Self::new()
+    }
+}

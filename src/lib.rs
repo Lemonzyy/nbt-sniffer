@@ -1,4 +1,244 @@
+pub mod cli;
+pub mod conversion;
+pub mod counter;
+
+use std::{
+    io::Cursor,
+    path::{Path, PathBuf},
+};
+
+use cli::CliArgs;
+use conversion::convert_simdnbt_to_valence_nbt;
+use counter::Counter;
+use mca::RegionReader;
 use valence_nbt::Value;
+
+pub const CHUNK_PER_REGION_SIDE: usize = 32;
+
+/// Represents a query for an item and its optional NBT filters
+#[derive(Debug)]
+pub struct ItemFilter {
+    pub id: String,
+    pub required_nbt: Option<Value>,
+}
+
+/// Parse raw CLI `item` arguments into `ItemQuery` structs
+/// Each entry is of form `ITEM_ID{nbt}`
+pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
+    raw_items
+        .iter()
+        .map(|entry| {
+            let mut id_str = entry.as_str();
+            let mut nbt_query = None;
+
+            if let Some(start) = entry.find('{')
+                && let Some(end) = entry.rfind('}')
+            {
+                id_str = &entry[..start];
+                let nbt_str = &entry[start..=end];
+                if !nbt_str.is_empty() {
+                    match valence_nbt::snbt::from_snbt_str(nbt_str) {
+                        Ok(parsed) => nbt_query = Some(parsed),
+                        Err(e) => eprintln!("Failed to parse SNBT '{nbt_str}': {e}"),
+                    }
+                }
+            }
+
+            let mut id = id_str.to_string();
+
+            if !id.starts_with("minecraft:") {
+                id = format!("minecraft:{id}");
+            }
+
+            ItemFilter {
+                id,
+                required_nbt: nbt_query,
+            }
+        })
+        .collect()
+}
+
+pub fn get_region_files(region_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = std::fs::read_dir(region_dir).map_err(|e| {
+        format!(
+            "Error: failed to read region directory '{}': {e}",
+            region_dir.display()
+        )
+    })?;
+
+    let mut region_files = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(dir_entry) => {
+                let path = dir_entry.path();
+                if let Some(ext) = path.extension()
+                    && ext == "mca"
+                {
+                    region_files.push(path);
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: failed to read an entry in '{}': {}",
+                    region_dir.display(),
+                    e
+                );
+            }
+        }
+    }
+    Ok(region_files)
+}
+
+pub fn process_region_file(
+    region_file_path: &PathBuf,
+    item_queries: &[ItemFilter],
+    cli_args: &CliArgs,
+    counter: &mut Counter,
+) {
+    let data = match std::fs::read(region_file_path) {
+        Ok(d) => d,
+        Err(e) => {
+            if cli_args.verbose {
+                eprintln!("Failed to read file {}: {e}", region_file_path.display());
+            }
+            return;
+        }
+    };
+
+    let region = match RegionReader::new(&data) {
+        Ok(r) => r,
+        Err(e) => {
+            if cli_args.verbose {
+                eprintln!(
+                    "Failed to parse region file {}: {e}",
+                    region_file_path.display()
+                );
+            }
+            return;
+        }
+    };
+
+    for cy in 0..CHUNK_PER_REGION_SIDE {
+        for cx in 0..CHUNK_PER_REGION_SIDE {
+            let chunk = match region.get_chunk(cx, cy) {
+                Ok(Some(c)) => c,
+                Ok(None) => {
+                    if cli_args.verbose {
+                        eprintln!("No chunk at ({cx}, {cy}) in {}", region_file_path.display());
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    if cli_args.verbose {
+                        eprintln!(
+                            "Failed to get chunk ({cx}, {cy}) in {}: {e}",
+                            region_file_path.display()
+                        );
+                    }
+                    continue;
+                }
+            };
+
+            let decompressed = match chunk.decompress() {
+                Ok(d) => d,
+                Err(e) => {
+                    if cli_args.verbose {
+                        eprintln!(
+                            "Failed to decompress chunk ({cx}, {cy}) in {}: {e}",
+                            region_file_path.display()
+                        );
+                    }
+                    continue;
+                }
+            };
+
+            let mut cursor = Cursor::new(decompressed.as_slice());
+            let nbt = match simdnbt::borrow::read(&mut cursor) {
+                Ok(n) => n,
+                Err(e) => {
+                    if cli_args.verbose {
+                        eprintln!(
+                            "Failed to read NBT data for chunk ({cx}, {cy}) in {}: {e}",
+                            region_file_path.display()
+                        );
+                    }
+                    continue;
+                }
+            };
+
+            let nbt = nbt.unwrap();
+            let Some(block_entities) = nbt.list("block_entities").and_then(|l| l.compounds())
+            else {
+                continue;
+            };
+
+            for be in block_entities {
+                let source_id = be.string("id").unwrap().to_string();
+                let x = be.int("x").unwrap();
+                let y = be.int("y").unwrap();
+                let z = be.int("z").unwrap();
+
+                if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
+                    items
+                        .into_iter()
+                        .filter(|item| item_matches(item, item_queries))
+                        .for_each(|item| {
+                            let id = item.string("id").unwrap().to_string();
+                            let count = item.int("count").unwrap_or(1) as u64;
+
+                            let nbt_components = item
+                                .compound("components")
+                                .map(|comp| convert_simdnbt_to_valence_nbt(&comp));
+
+                            counter.add(id.clone(), nbt_components.as_ref(), count);
+
+                            if cli_args.show_coords || cli_args.show_nbt {
+                                print_match(&source_id, (x, y, z), &item, count, cli_args);
+                            }
+                        });
+                }
+            }
+        }
+    }
+}
+
+fn item_matches(item: &simdnbt::borrow::NbtCompound, queries: &[ItemFilter]) -> bool {
+    let id = item.string("id").unwrap().to_string();
+    if queries.is_empty() {
+        return true;
+    }
+    for q in queries {
+        if q.id == id {
+            if let Some(ref required) = q.required_nbt {
+                let val = convert_simdnbt_to_valence_nbt(item);
+                if nbt_is_subset(&val, required) {
+                    return true;
+                }
+            } else {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn print_match(
+    source_name: &str,
+    source_position: (i32, i32, i32),
+    item: &simdnbt::borrow::NbtCompound,
+    count: u64,
+    args: &CliArgs,
+) {
+    let id = item.string("id").unwrap();
+    let (x, y, z) = source_position;
+
+    if args.show_nbt {
+        let snbt = valence_nbt::snbt::to_snbt_string(&convert_simdnbt_to_valence_nbt(item));
+        println!("[{source_name} @ {x} {y} {z}] {count}x {id} NBT={snbt}");
+    } else if args.show_coords {
+        println!("[{source_name} @ {x} {y} {z}] {count}x {id}");
+    }
+}
 
 /// Returns `true` if `subset` is entirely contained within `superset`.
 /// Compounds require key-by-key subset checks; lists treat each element

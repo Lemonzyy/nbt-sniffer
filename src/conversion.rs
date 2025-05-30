@@ -1,7 +1,7 @@
 use simdnbt::borrow::{NbtCompound, NbtList};
 use valence_nbt::{Compound, List, Value};
 
-pub fn convert_simdnbt_to_valence(compound: &NbtCompound) -> Value {
+pub fn convert_simdnbt_to_valence_nbt(compound: &NbtCompound) -> Value {
     let mut valence_compound = Compound::new();
 
     for (key, _) in compound.iter() {
@@ -28,7 +28,7 @@ pub fn convert_simdnbt_to_valence(compound: &NbtCompound) -> Value {
             let valence_list = convert_list(&list);
             Value::List(valence_list)
         } else if let Some(c) = compound.compound(&key_str) {
-            convert_simdnbt_to_valence(&c)
+            convert_simdnbt_to_valence_nbt(&c)
         } else if let Some(arr) = compound.int_array(&key_str) {
             Value::IntArray(arr.to_vec())
         } else if let Some(arr) = compound.long_array(&key_str) {
@@ -85,7 +85,7 @@ pub fn convert_list(list: &NbtList) -> List {
         }
     } else if let Some(compounds) = list.compounds() {
         for c in compounds {
-            let _ = valence_list.try_push(convert_simdnbt_to_valence(&c));
+            let _ = valence_list.try_push(convert_simdnbt_to_valence_nbt(&c));
         }
     } else if let Some(int_arrays) = list.int_arrays() {
         for arr in int_arrays {
