@@ -18,7 +18,7 @@ pub const CHUNK_PER_REGION_SIDE: usize = 32;
 /// Represents a query for an item and its optional NBT filters
 #[derive(Debug)]
 pub struct ItemFilter {
-    pub id: String,
+    pub id: Option<String>,
     pub required_nbt: Option<Value>,
 }
 
@@ -44,10 +44,9 @@ pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
                 }
             }
 
-            let mut id = id_str.to_string();
-
-            if !id.starts_with("minecraft:") {
-                id = format!("minecraft:{id}");
+            let mut id = None;
+            if !id_str.is_empty() && !id_str.starts_with("minecraft:") {
+                id = Some(format!("minecraft:{id_str}"));
             }
 
             ItemFilter {
@@ -219,21 +218,28 @@ pub fn process_region_file(
 
 fn item_matches(item: &simdnbt::borrow::NbtCompound, queries: &[ItemFilter]) -> bool {
     let id = item.string("id").unwrap().to_string();
+    let valence_nbt = convert_simdnbt_to_valence_nbt(item);
+
     if queries.is_empty() {
         return true;
     }
-    for q in queries {
-        if q.id == id {
-            if let Some(ref required) = q.required_nbt {
-                let val = convert_simdnbt_to_valence_nbt(item);
-                if nbt_is_subset(&val, required) {
-                    return true;
-                }
-            } else {
-                return true;
-            }
+
+    for query in queries {
+        let id_matches = match &query.id {
+            Some(expected_id) => &id == expected_id,
+            None => true,
+        };
+
+        let nbt_matches = match &query.required_nbt {
+            Some(required_nbt) => nbt_is_subset(&valence_nbt, required_nbt),
+            None => true,
+        };
+
+        if id_matches && nbt_matches {
+            return true;
         }
     }
+
     false
 }
 

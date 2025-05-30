@@ -35,21 +35,29 @@ fn main() {
             a
         });
 
-    if args.detailed {
-        for (key, &count) in counter.detailed_counts() {
-            println!("{key}: {count}");
+    match (args.detailed, args.by_id, args.by_nbt) {
+        (true, _, _) => {
+            println!("Detailed counts (by item + NBT):");
+            for (key, &count) in counter.detailed_counts() {
+                println!("{key}: {count}");
+            }
         }
-    } else if args.by_id {
-        for (id, count) in counter.total_by_id() {
-            println!("{id}: {count}");
+        (_, true, _) => {
+            println!("Counts by item ID:");
+            for (id, count) in counter.total_by_id() {
+                println!("{id}: {count}");
+            }
         }
-    } else if args.by_nbt {
-        for (nbt, count) in counter.total_by_nbt() {
-            println!("{}: {count}", nbt.unwrap_or_else(|| "No NBT".to_string()));
+        (_, _, true) => {
+            println!("Counts by NBT only:");
+            for (nbt, count) in counter.total_by_nbt() {
+                println!("{}: {count}", nbt.unwrap_or_else(|| "No NBT".to_string()));
+            }
         }
-    } else {
-        println!("Total: {}", counter.total());
+        _ => {
+            println!("Total items matched: {}", counter.total());
+        }
     }
 
-    println!("Took {:?}", start.elapsed());
+    println!("Scan completed in {:?}", start.elapsed());
 }
