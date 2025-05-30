@@ -1,6 +1,10 @@
 mod conversion;
 
-use std::{io::Cursor, path::PathBuf, time::Instant};
+use std::{
+    io::Cursor,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use clap::{ArgGroup, Parser};
 use conversion::convert_simdnbt_to_valence;
@@ -38,6 +42,10 @@ struct CliArgs {
     /// Also output the coordinates of each matching item
     #[arg(long)]
     with_coords: bool,
+
+    /// Increase output verbosity
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 /// Represents a query for an item and its optional NBT filters
@@ -53,13 +61,13 @@ pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
     raw_items
         .iter()
         .map(|entry| {
-            let mut id = entry.clone();
+            let mut id_str = entry.as_str();
             let mut nbt_query = None;
 
             if let Some(start) = entry.find('{')
                 && let Some(end) = entry.rfind('}')
             {
-                id = entry[..start].to_string();
+                id_str = &entry[..start];
                 let nbt_str = &entry[start..=end];
                 if !nbt_str.is_empty() {
                     match valence_nbt::snbt::from_snbt_str(nbt_str) {
@@ -68,6 +76,8 @@ pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
                     }
                 }
             }
+
+            let mut id = id_str.to_string();
 
             if !id.starts_with("minecraft:") {
                 id = format!("minecraft:{id}");
@@ -99,7 +109,7 @@ fn main() {
 
     let start = Instant::now();
 
-    let total: usize = region_files
+    let total: u64 = region_files
         .par_iter()
         .map(|path| count_items_in_region_file(path, &queries, &args))
         .sum();
@@ -108,7 +118,7 @@ fn main() {
     println!("Took {:?}", start.elapsed());
 }
 
-fn get_region_files(region_dir: &PathBuf) -> Result<Vec<PathBuf>, String> {
+fn get_region_files(region_dir: &Path) -> Result<Vec<PathBuf>, String> {
     let entries = std::fs::read_dir(region_dir).map_err(|e| {
         format!(
             "Error: failed to read region directory '{}': {e}",
@@ -121,7 +131,9 @@ fn get_region_files(region_dir: &PathBuf) -> Result<Vec<PathBuf>, String> {
         match entry {
             Ok(dir_entry) => {
                 let path = dir_entry.path();
-                if path.extension().is_some_and(|ext| ext == "mca") {
+                if let Some(ext) = path.extension()
+                    && ext == "mca"
+                {
                     region_files.push(path);
                 }
             }
@@ -141,42 +153,98 @@ fn count_items_in_region_file(
     region_file_path: &PathBuf,
     item_queries: &[ItemFilter],
     cli_args: &CliArgs,
-) -> usize {
-    let data = std::fs::read(region_file_path).unwrap_or_default();
+) -> u64 {
+    let data = match std::fs::read(region_file_path) {
+        Ok(d) => d,
+        Err(e) => {
+            if cli_args.verbose {
+                eprintln!("Failed to read file {}: {e}", region_file_path.display());
+            }
+            return 0;
+        }
+    };
+
     let region = match RegionReader::new(&data) {
         Ok(r) => r,
-        Err(_) => return 0,
+        Err(e) => {
+            if cli_args.verbose {
+                eprintln!(
+                    "Failed to parse region file {}: {e}",
+                    region_file_path.display(),
+                );
+            }
+            return 0;
+        }
     };
+
     let mut count = 0;
 
     for cy in 0..REGION_SIZE_IN_CHUNK {
         for cx in 0..REGION_SIZE_IN_CHUNK {
-            if let Ok(Some(chunk)) = region.get_chunk(cx, cy)
-                && let Ok(decompressed) = chunk.decompress()
-            {
-                let mut cursor = Cursor::new(decompressed.as_slice());
-                if let Ok(nbt) = simdnbt::borrow::read(&mut cursor)
-                    && let Some(block_entities) = nbt
+            match region.get_chunk(cx, cy) {
+                Ok(Some(chunk)) => {
+                    let decompressed = match chunk.decompress() {
+                        Ok(d) => d,
+                        Err(e) => {
+                            if cli_args.verbose {
+                                eprintln!(
+                                    "Failed to decompress chunk ({cx}, {cy}) in {}: {e}",
+                                    region_file_path.display(),
+                                );
+                            }
+                            continue;
+                        }
+                    };
+
+                    let mut cursor = Cursor::new(decompressed.as_slice());
+                    let nbt = match simdnbt::borrow::read(&mut cursor) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            if cli_args.verbose {
+                                eprintln!(
+                                    "Failed to read NBT data for chunk ({cx}, {cy}) in {}: {e}",
+                                    region_file_path.display(),
+                                );
+                            }
+                            continue;
+                        }
+                    };
+
+                    if let Some(block_entities) = nbt
                         .unwrap()
                         .list("block_entities")
                         .and_then(|l| l.compounds())
-                {
-                    for be in block_entities {
-                        let id = be.string("id").unwrap().to_string();
-                        let x = be.int("x").unwrap();
-                        let y = be.int("y").unwrap();
-                        let z = be.int("z").unwrap();
-                        if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
-                            for item in items {
-                                count += count_matching_item(
-                                    &id,
-                                    (x, y, z),
-                                    &item,
-                                    item_queries,
-                                    cli_args,
-                                );
+                    {
+                        for be in block_entities {
+                            let id = be.string("id").unwrap().to_string();
+                            let x = be.int("x").unwrap();
+                            let y = be.int("y").unwrap();
+                            let z = be.int("z").unwrap();
+                            if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
+                                for item in items {
+                                    count += count_matching_item(
+                                        &id,
+                                        (x, y, z),
+                                        &item,
+                                        item_queries,
+                                        cli_args,
+                                    );
+                                }
                             }
                         }
+                    }
+                }
+                Ok(None) => {
+                    if cli_args.verbose {
+                        eprintln!("No chunk at ({cx}, {cy}) in {}", region_file_path.display());
+                    }
+                }
+                Err(e) => {
+                    if cli_args.verbose {
+                        eprintln!(
+                            "Failed to get chunk ({cx}, {cy}) in {}: {e}",
+                            region_file_path.display(),
+                        );
                     }
                 }
             }
@@ -192,7 +260,7 @@ fn count_matching_item(
     item: &simdnbt::borrow::NbtCompound,
     queries: &[ItemFilter],
     args: &CliArgs,
-) -> usize {
+) -> u64 {
     let id = item.string("id").unwrap().to_string();
     let count = item.int("count").unwrap_or(1);
 
@@ -220,7 +288,7 @@ fn count_matching_item(
         } else if args.with_coords {
             println!("[{source_name} @ {x} {y} {z}] {count}x {id}");
         }
-        count as usize
+        count as u64
     } else {
         0
     }
