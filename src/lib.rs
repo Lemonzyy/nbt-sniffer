@@ -47,10 +47,13 @@ pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
                 }
             }
 
-            let mut id = None;
-            if !id_str.is_empty() && !id_str.starts_with("minecraft:") {
-                id = Some(format!("minecraft:{id_str}"));
-            }
+            let id = if id_str.is_empty() {
+                None
+            } else if id_str.contains(':') {
+                Some(id_str.to_string())
+            } else {
+                Some(format!("minecraft:{id_str}"))
+            };
 
             ItemFilter {
                 id,
