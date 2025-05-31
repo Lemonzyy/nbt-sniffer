@@ -4,6 +4,7 @@ pub mod counter;
 pub mod tree;
 
 use std::{
+    collections::HashMap,
     io::Cursor,
     path::{Path, PathBuf},
 };
@@ -24,7 +25,7 @@ pub struct ItemFilter {
     pub required_nbt: Option<Value>,
 }
 
-/// Parse raw CLI `item` arguments into `ItemQuery` structs
+/// Parse raw CLI `item` arguments into `ItemFilter` structs
 /// Each entry is of form `ITEM_ID{nbt}`
 pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
     raw_items
@@ -90,6 +91,9 @@ pub fn get_region_files(region_dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(region_files)
 }
 
+/// Scans one region file, recursively collects nested items inside block-entity inventories,
+/// then prints a collapsed tree for each block-entity (if `--per-source-summary` is set).  
+/// Also merges all found items into the global `counter`.
 pub fn process_region_file(
     region_file_path: &PathBuf,
     item_queries: &[ItemFilter],
@@ -179,86 +183,146 @@ pub fn process_region_file(
                 let y = be.int("y").unwrap();
                 let z = be.int("z").unwrap();
 
-                let mut be_counter = Counter::new();
+                let mut nodes = Vec::new();
 
                 if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
-                    items
-                        .into_iter()
-                        .filter(|item| item_matches(item, item_queries))
-                        .for_each(|item| {
-                            let id = item.string("id").unwrap().to_string();
-                            let count = item.int("count").unwrap_or(1) as u64;
-
-                            let nbt_components = item
-                                .compound("components")
-                                .map(|comp| convert_simdnbt_to_valence_nbt(&comp));
-
-                            be_counter.add(id.clone(), nbt_components.as_ref(), count);
-                        });
+                    for item in items {
+                        collect_summary_node(&item, cli_args, item_queries, &mut nodes, counter);
+                    }
                 }
 
-                if cli_args.per_source_summary && !be_counter.is_empty() {
-                    let mut items = be_counter.detailed_counts().iter().collect::<Vec<_>>();
+                if cli_args.per_source_summary && !nodes.is_empty() {
+                    let mut leaf_map = HashMap::new();
+                    let mut nonleaf = Vec::new();
 
-                    items.sort_by(|(a_key, a_count), (b_key, b_count)| {
-                        b_count.cmp(a_count).then_with(|| a_key.id.cmp(&b_key.id))
-                    });
-
-                    let mut children = Vec::new();
-
-                    for (item_key, &count) in items {
-                        children.push(ItemSummaryNode::Item {
-                            id: item_key.id.clone(),
-                            count,
-                            snbt: if cli_args.show_nbt {
-                                item_key
-                                    .components_snbt
-                                    .clone()
-                                    .map(|s| escape_nbt_string(&s))
-                            } else {
-                                None
-                            },
-                            children: Vec::new(),
-                        });
+                    for node in nodes {
+                        match &node {
+                            ItemSummaryNode::Item {
+                                id,
+                                count,
+                                snbt,
+                                children,
+                            } if children.is_empty() => {
+                                let key = (id.clone(), snbt.clone());
+                                *leaf_map.entry(key).or_insert(0) += *count;
+                            }
+                            _ => nonleaf.push(node),
+                        }
                     }
 
-                    let root =
-                        ItemSummaryNode::new_root(format!("[{source_id} @ {x} {y} {z}]"), children);
+                    let mut collapsed = Vec::new();
+                    for ((id, snbt), total_count) in leaf_map.into_iter() {
+                        collapsed.push(ItemSummaryNode::new_item(
+                            id,
+                            total_count,
+                            snbt,
+                            Vec::new(),
+                        ));
+                    }
 
+                    collapsed.extend(nonleaf);
+
+                    collapsed.sort_by(|a, b| {
+                        let (a_count, a_id) = match a {
+                            ItemSummaryNode::Item { count, id, .. } => (*count, id.clone()),
+                            _ => (0u64, String::new()),
+                        };
+                        let (b_count, b_id) = match b {
+                            ItemSummaryNode::Item { count, id, .. } => (*count, id.clone()),
+                            _ => (0u64, String::new()),
+                        };
+                        b_count.cmp(&a_count).then(a_id.cmp(&b_id))
+                    });
+
+                    let root_label = format!("{source_id} @ {x} {y} {z}");
+                    let root = ItemSummaryNode::new_root(root_label, collapsed);
                     ptree::print_tree(&root).unwrap();
                 }
-
-                counter.merge(&be_counter);
             }
         }
     }
 }
 
-fn item_matches(item: &simdnbt::borrow::NbtCompound, queries: &[ItemFilter]) -> bool {
-    let id = item.string("id").unwrap().to_string();
-    let valence_nbt = convert_simdnbt_to_valence_nbt(item);
+/// Recursively builds an `ItemSummaryNode` for `item_nbt` and all nested children (under `components -> minecraft:container` or `components -> minecraft:bundle_contents`),
+/// pushes leaves into `out_nodes`, and also updates the `global_counter`.
+fn collect_summary_node(
+    item_nbt: &simdnbt::borrow::NbtCompound,
+    cli_args: &CliArgs,
+    queries: &[ItemFilter],
+    out_nodes: &mut Vec<ItemSummaryNode>,
+    global_counter: &mut Counter,
+) {
+    let id = item_nbt.string("id").unwrap().to_string();
+    let count = item_nbt.int("count").unwrap_or(1) as u64;
 
-    if queries.is_empty() {
-        return true;
-    }
+    let matches_filter = if queries.is_empty() {
+        true
+    } else {
+        let valence_nbt = convert_simdnbt_to_valence_nbt(item_nbt);
+        queries.iter().any(|q| {
+            let id_ok = q.id.as_ref().is_none_or(|qid| qid == &id);
+            let nbt_ok = q
+                .required_nbt
+                .as_ref()
+                .is_none_or(|req| nbt_is_subset(&valence_nbt, req));
+            id_ok && nbt_ok
+        })
+    };
 
-    for query in queries {
-        let id_matches = match &query.id {
-            Some(expected_id) => &id == expected_id,
-            None => true,
-        };
+    let mut children: Vec<ItemSummaryNode> = Vec::new();
 
-        let nbt_matches = match &query.required_nbt {
-            Some(required_nbt) => nbt_is_subset(&valence_nbt, required_nbt),
-            None => true,
-        };
+    if let Some(components) = item_nbt.compound("components") {
+        if let Some(nested_list) = components
+            .list("minecraft:container")
+            .and_then(|l| l.compounds())
+        {
+            for nested_entry in nested_list {
+                if let Some(nested_item) = nested_entry.compound("item") {
+                    collect_summary_node(
+                        &nested_item,
+                        cli_args,
+                        queries,
+                        &mut children,
+                        global_counter,
+                    );
+                }
+            }
+        }
 
-        if id_matches && nbt_matches {
-            return true;
+        if let Some(nested_list) = components
+            .list("minecraft:bundle_contents")
+            .and_then(|l| l.compounds())
+        {
+            for nested_entry in nested_list {
+                collect_summary_node(
+                    &nested_entry,
+                    cli_args,
+                    queries,
+                    &mut children,
+                    global_counter,
+                );
+            }
         }
     }
 
-    false
+    if matches_filter {
+        let nbt_components = item_nbt
+            .compound("components")
+            .map(|comp| convert_simdnbt_to_valence_nbt(&comp));
+
+        global_counter.add(id.clone(), nbt_components.as_ref(), count);
+
+        let snbt = if cli_args.show_nbt {
+            nbt_components.map(|c| valence_nbt::snbt::to_snbt_string(&c))
+        } else {
+            None
+        };
+
+        let node = ItemSummaryNode::new_item(id.clone(), count, snbt, children);
+        out_nodes.push(node);
+    } else if !children.is_empty() {
+        out_nodes.extend(children);
+    }
 }
 
 /// Returns `true` if `subset` is entirely contained within `superset`.
@@ -294,11 +358,11 @@ pub fn nbt_is_subset(superset: &Value, subset: &Value) -> bool {
             })
         }
 
-        // Everything else: exact equality
         _ => superset == subset,
     }
 }
 
+/// Escape control characters when printing SNBT
 pub fn escape_nbt_string(s: &str) -> String {
     s.chars()
         .flat_map(|c| match c {
@@ -306,7 +370,6 @@ pub fn escape_nbt_string(s: &str) -> String {
             '\n' => Some("\\n".to_string()),
             '\r' => Some("\\r".to_string()),
             '\t' => Some("\\t".to_string()),
-            //'\"' => Some("\\\"".to_string()),
             c if c.is_control() => Some(format!("\\u{:04x}", c as u32)),
             _ => Some(c.to_string()),
         })
