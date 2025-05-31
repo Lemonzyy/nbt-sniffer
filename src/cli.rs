@@ -25,15 +25,19 @@ pub struct CliArgs {
     pub items: Vec<String>,
 
     /// Which summary format to display.
-    #[arg(long = "view", value_enum, default_value_t = ViewMode::ById)]
+    #[arg(long, value_enum, default_value_t = ViewMode::ById)]
     pub view: ViewMode,
+
+    /// Output raw CSV instead of a formatted table
+    #[arg(long, conflicts_with = "per_source_summary")]
+    pub csv: bool,
 
     /// Show full NBT data in item summaries
     #[arg(long)]
     pub show_nbt: bool,
 
-    /// Print per-source item summaries instead of only global total
-    #[arg(long)]
+    /// Show a tree summary per source
+    #[arg(long, conflicts_with = "csv")]
     pub per_source_summary: bool,
 
     /// Increase output verbosity

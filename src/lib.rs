@@ -293,7 +293,8 @@ fn collect_summary_node(
         let snbt = if cli_args.show_nbt {
             nbt_components
                 .map(|c| valence_nbt::snbt::to_snbt_string(&c))
-                .map(|s| escape_nbt_string(&s))
+                .as_deref()
+                .map(escape_nbt_string)
         } else {
             None
         };
