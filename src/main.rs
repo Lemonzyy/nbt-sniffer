@@ -151,7 +151,7 @@ where
     let mut wtr = Writer::from_writer(std::io::stdout());
     wtr.write_record(headers).expect("Failed to write headers");
     for row in rows {
-        wtr.write_record(&row_fn(row)).expect("Failed to write row");
+        wtr.write_record(row_fn(row)).expect("Failed to write row");
     }
     wtr.flush().expect("Failed to flush writer");
 }

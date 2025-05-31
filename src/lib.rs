@@ -98,7 +98,7 @@ pub fn get_region_files(region_dir: &Path) -> Result<Vec<PathBuf>, String> {
 /// then prints a collapsed tree for each block-entity (if `--per-source-summary` is set).  
 /// Also merges all found items into the global `counter`.
 pub fn process_region_file(
-    region_file_path: &PathBuf,
+    region_file_path: &Path,
     item_queries: &[ItemFilter],
     cli_args: &CliArgs,
     counter: &mut Counter,
@@ -147,80 +147,94 @@ pub fn process_region_file(
                 }
             };
 
-            let decompressed = match chunk.decompress() {
-                Ok(d) => d,
-                Err(e) => {
-                    if cli_args.verbose {
-                        eprintln!(
-                            "Failed to decompress chunk ({cx}, {cy}) in {}: {e}",
-                            region_file_path.display()
-                        );
-                    }
-                    continue;
-                }
-            };
-
-            let mut cursor = Cursor::new(decompressed.as_slice());
-            let nbt = match simdnbt::borrow::read(&mut cursor) {
-                Ok(n) => n,
-                Err(e) => {
-                    if cli_args.verbose {
-                        eprintln!(
-                            "Failed to read NBT data for chunk ({cx}, {cy}) in {}: {e}",
-                            region_file_path.display()
-                        );
-                    }
-                    continue;
-                }
-            };
-
-            let nbt = nbt.unwrap();
-            let Some(block_entities) = nbt.list("block_entities").and_then(|l| l.compounds())
-            else {
-                continue;
-            };
-
-            for be in block_entities {
-                let source_id = be.string("id").unwrap().to_string();
-                let x = be.int("x").unwrap();
-                let y = be.int("y").unwrap();
-                let z = be.int("z").unwrap();
-
-                let mut raw_nodes = Vec::new();
-                if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
-                    for item in items {
-                        collect_summary_node(
-                            &item,
-                            cli_args,
-                            item_queries,
-                            &mut raw_nodes,
-                            counter,
-                        );
-                    }
-                }
-
-                if let Some(item) = be.compound("item") {
-                    collect_summary_node(&item, cli_args, item_queries, &mut raw_nodes, counter);
-                }
-
-                if let Some(item) = be.compound("RecordItem") {
-                    collect_summary_node(&item, cli_args, item_queries, &mut raw_nodes, counter);
-                }
-
-                if let Some(item) = be.compound("Book") {
-                    collect_summary_node(&item, cli_args, item_queries, &mut raw_nodes, counter);
-                }
-
-                if cli_args.per_source_summary && !raw_nodes.is_empty() {
-                    let root_label = format!("{source_id} @ {x} {y} {z}");
-                    let mut root = ItemSummaryNode::new_root(root_label, raw_nodes);
-
-                    root.collapse_leaves_recursive();
-
-                    print_tree(&root).unwrap();
-                }
-            }
+            process_chunk(
+                &chunk,
+                cy,
+                cx,
+                region_file_path,
+                item_queries,
+                cli_args,
+                counter,
+            );
         }
+    }
+}
+
+fn process_chunk(
+    chunk: &mca::RawChunk,
+    cy: usize,
+    cx: usize,
+    region_file_path: &Path,
+    item_queries: &[ItemFilter],
+    cli_args: &CliArgs,
+    counter: &mut Counter,
+) {
+    let decompressed = match chunk.decompress() {
+        Ok(d) => d,
+        Err(e) => {
+            if cli_args.verbose {
+                eprintln!(
+                    "Failed to decompress chunk ({cx}, {cy}) in {}: {e}",
+                    region_file_path.display()
+                );
+            }
+            return;
+        }
+    };
+    let mut cursor = Cursor::new(decompressed.as_slice());
+    let nbt = match simdnbt::borrow::read(&mut cursor) {
+        Ok(n) => n.unwrap(),
+        Err(e) => {
+            if cli_args.verbose {
+                eprintln!(
+                    "Failed to read NBT data for chunk ({cx}, {cy}) in {}: {e}",
+                    region_file_path.display()
+                );
+            }
+            return;
+        }
+    };
+
+    let Some(block_entities) = nbt.list("block_entities").and_then(|l| l.compounds()) else {
+        return;
+    };
+
+    for block_entity in block_entities {
+        process_block_entity(block_entity, item_queries, cli_args, counter);
+    }
+}
+
+fn process_block_entity(
+    block_entity: simdnbt::borrow::NbtCompound,
+    item_queries: &[ItemFilter],
+    cli_args: &CliArgs,
+    counter: &mut Counter,
+) {
+    let id = block_entity.string("id").unwrap().to_string();
+    let x = block_entity.int("x").unwrap();
+    let y = block_entity.int("y").unwrap();
+    let z = block_entity.int("z").unwrap();
+
+    let mut summary_nodes = Vec::new();
+    if let Some(items) = block_entity.list("Items").and_then(|l| l.compounds()) {
+        for item in items {
+            collect_summary_node(&item, cli_args, item_queries, &mut summary_nodes, counter);
+        }
+    }
+
+    for field in &["item", "RecordItem", "Book"] {
+        if let Some(item) = block_entity.compound(field) {
+            collect_summary_node(&item, cli_args, item_queries, &mut summary_nodes, counter);
+        }
+    }
+
+    if cli_args.per_source_summary && !summary_nodes.is_empty() {
+        let root_label = format!("{id} @ {x} {y} {z}");
+        let mut root = ItemSummaryNode::new_root(root_label, summary_nodes);
+
+        root.collapse_leaves_recursive();
+
+        print_tree(&root).unwrap();
     }
 }
 
@@ -289,7 +303,8 @@ fn collect_summary_node(
     if matches_filter {
         let nbt_components = item_nbt
             .compound("components")
-            .map(|comp| convert_simdnbt_to_valence_nbt(&comp));
+            .as_ref()
+            .map(convert_simdnbt_to_valence_nbt);
 
         global_counter.add(id.clone(), nbt_components.as_ref(), count);
 
