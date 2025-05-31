@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt};
 
 use valence_nbt::Value;
 
-use crate::escape_nbt_string;
+use crate::{Scope, escape_nbt_string};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ItemKey {
@@ -28,6 +28,7 @@ impl fmt::Display for ItemKey {
     }
 }
 
+#[derive(Debug)]
 pub struct Counter {
     counts: HashMap<ItemKey, u64>,
 }
@@ -42,10 +43,6 @@ impl Counter {
     pub fn add(&mut self, id: String, components_nbt: Option<&Value>, count: u64) {
         let key = ItemKey::new(id, components_nbt);
         *self.counts.entry(key).or_insert(0) += count;
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.counts.iter().all(|(_, &count)| count == 0)
     }
 
     pub fn merge(&mut self, other: &Self) {
@@ -80,6 +77,45 @@ impl Counter {
 }
 
 impl Default for Counter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct CounterMap {
+    map: HashMap<Scope, Counter>,
+}
+
+impl CounterMap {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+
+    pub fn entry_counter(&mut self, scope: Scope) -> &mut Counter {
+        self.map.entry(scope).or_default()
+    }
+
+    pub fn merge_scope(&mut self, scope: Scope, other: &Counter) {
+        self.entry_counter(scope).merge(other);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Scope, &Counter)> {
+        self.map.iter()
+    }
+
+    pub fn combined(&self) -> Counter {
+        let mut combined = Counter::new();
+        for counter in self.map.values() {
+            combined.merge(counter);
+        }
+        combined
+    }
+}
+
+impl Default for CounterMap {
     fn default() -> Self {
         Self::new()
     }

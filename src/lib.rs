@@ -18,6 +18,23 @@ use valence_nbt::Value;
 
 pub const CHUNK_PER_REGION_SIDE: usize = 32;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Scope {
+    pub dimension: String,
+    pub data_type: DataType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DataType {
+    BlockEntity,
+    Entity,
+}
+
+pub struct ScanTask {
+    pub path: PathBuf,
+    pub scope: Scope,
+}
+
 /// Represents a query for an item and its optional NBT filters
 #[derive(Debug)]
 pub struct ItemFilter {
@@ -63,35 +80,29 @@ pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
         .collect()
 }
 
-pub fn get_region_files(region_dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let entries = std::fs::read_dir(region_dir).map_err(|e| {
-        format!(
-            "Error: failed to read region directory '{}': {e}",
-            region_dir.display()
-        )
-    })?;
+pub fn list_mca_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| format!("Error: failed to read directory '{}': {e}", dir.display()))?;
 
-    let mut region_files = Vec::new();
-    for entry in entries {
-        match entry {
-            Ok(dir_entry) => {
-                let path = dir_entry.path();
-                if let Some(ext) = path.extension()
-                    && ext == "mca"
-                {
-                    region_files.push(path);
+    let mut mca_files = Vec::new();
+    for entry_res in entries {
+        match entry_res {
+            Ok(de) => {
+                let path = de.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("mca") {
+                    mca_files.push(path);
                 }
             }
             Err(e) => {
                 eprintln!(
                     "Warning: failed to read an entry in '{}': {}",
-                    region_dir.display(),
+                    dir.display(),
                     e
                 );
             }
         }
     }
-    Ok(region_files)
+    Ok(mca_files)
 }
 
 /// Scans one region file, recursively collects nested items inside block-entity inventories,
