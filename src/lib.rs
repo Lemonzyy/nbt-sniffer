@@ -196,6 +196,18 @@ pub fn process_region_file(
                     }
                 }
 
+                if let Some(item) = be.compound("item") {
+                    collect_summary_node(&item, cli_args, item_queries, &mut raw_nodes, counter);
+                }
+
+                if let Some(item) = be.compound("RecordItem") {
+                    collect_summary_node(&item, cli_args, item_queries, &mut raw_nodes, counter);
+                }
+
+                if let Some(item) = be.compound("Book") {
+                    collect_summary_node(&item, cli_args, item_queries, &mut raw_nodes, counter);
+                }
+
                 if cli_args.per_source_summary && !raw_nodes.is_empty() {
                     let root_label = format!("{source_id} @ {x} {y} {z}");
                     let mut root = ItemSummaryNode::new_root(root_label, raw_nodes);
