@@ -183,7 +183,7 @@ pub fn process_region_file(
                 let y = be.int("y").unwrap();
                 let z = be.int("z").unwrap();
 
-                let mut raw_nodes: Vec<ItemSummaryNode> = Vec::new();
+                let mut raw_nodes = Vec::new();
                 if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
                     for item in items {
                         collect_summary_node(
@@ -235,7 +235,7 @@ fn collect_summary_node(
         })
     };
 
-    let mut children: Vec<ItemSummaryNode> = Vec::new();
+    let mut children = Vec::new();
 
     if let Some(components) = item_nbt.compound("components") {
         if let Some(nested_list) = components
@@ -279,7 +279,9 @@ fn collect_summary_node(
         global_counter.add(id.clone(), nbt_components.as_ref(), count);
 
         let snbt = if cli_args.show_nbt {
-            nbt_components.map(|c| valence_nbt::snbt::to_snbt_string(&c))
+            nbt_components
+                .map(|c| valence_nbt::snbt::to_snbt_string(&c))
+                .map(|s| escape_nbt_string(&s))
         } else {
             None
         };
