@@ -1,13 +1,10 @@
 use std::path::PathBuf;
 
-use clap::{ArgGroup, Parser};
+use clap::{ArgGroup, Parser, ValueEnum};
 
 /// Count items in a Minecraft world (1.21.5+), with optional per-item NBT filters and coordinates
 #[derive(Parser, Debug)]
-#[command(
-    group(ArgGroup::new("mode").args(["all", "items"]).required(true)),
-    group(ArgGroup::new("view").args(["detailed", "by_id", "by_nbt"]))
-)]
+#[command(group(ArgGroup::new("mode").args(["all", "items"]).required(true)))]
 pub struct CliArgs {
     #[arg(short, long, value_name = "PATH")]
     pub world_path: PathBuf,
@@ -27,17 +24,9 @@ pub struct CliArgs {
     )]
     pub items: Vec<String>,
 
-    /// List every distinct (ID, NBT)
-    #[arg(long)]
-    pub detailed: bool,
-
-    /// Summarize counts by item ID
-    #[arg(long)]
-    pub by_id: bool,
-
-    /// Summarize counts by NBT only
-    #[arg(long)]
-    pub by_nbt: bool,
+    /// Which summary format to display.
+    #[arg(long = "view", value_enum, default_value_t = ViewMode::ById)]
+    pub view: ViewMode,
 
     /// Show full NBT data in item summaries
     #[arg(long)]
@@ -50,4 +39,17 @@ pub struct CliArgs {
     /// Increase output verbosity
     #[arg(short, long)]
     pub verbose: bool,
+}
+
+/// Which summary‐format to display.
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ViewMode {
+    /// List every distinct (ID, NBT) combination
+    Detailed,
+
+    /// Summarize counts by item ID
+    ById,
+
+    /// Summarize counts by NBT only
+    ByNbt,
 }

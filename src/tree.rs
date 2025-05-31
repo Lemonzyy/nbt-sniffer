@@ -59,13 +59,13 @@ impl ItemSummaryNode {
                 snbt,
                 children,
             } = &child
+                && children.is_empty()
             {
-                if children.is_empty() {
-                    let key = (id.clone(), snbt.clone());
-                    *leaf_map.entry(key).or_default() += *count;
-                    continue;
-                }
+                let key = (id.clone(), snbt.clone());
+                *leaf_map.entry(key).or_default() += *count;
+                continue;
             }
+
             new_children.push(child);
         }
 
@@ -89,10 +89,10 @@ impl ItemSummaryNode {
         *self.children_mut() = new_children;
 
         for child in self.children_mut().iter_mut() {
-            if let ItemSummaryNode::Item { children, .. } = child {
-                if !children.is_empty() {
-                    child.collapse_leaves_recursive();
-                }
+            if let ItemSummaryNode::Item { children, .. } = child
+                && !children.is_empty()
+            {
+                child.collapse_leaves_recursive();
             }
         }
     }
