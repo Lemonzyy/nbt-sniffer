@@ -4,7 +4,6 @@ pub mod counter;
 pub mod tree;
 
 use std::{
-    collections::HashMap,
     io::Cursor,
     path::{Path, PathBuf},
 };
@@ -13,6 +12,7 @@ use cli::CliArgs;
 use conversion::convert_simdnbt_to_valence_nbt;
 use counter::Counter;
 use mca::RegionReader;
+use ptree::print_tree;
 use tree::ItemSummaryNode;
 use valence_nbt::Value;
 
@@ -183,60 +183,26 @@ pub fn process_region_file(
                 let y = be.int("y").unwrap();
                 let z = be.int("z").unwrap();
 
-                let mut nodes = Vec::new();
-
+                let mut raw_nodes: Vec<ItemSummaryNode> = Vec::new();
                 if let Some(items) = be.list("Items").and_then(|l| l.compounds()) {
                     for item in items {
-                        collect_summary_node(&item, cli_args, item_queries, &mut nodes, counter);
+                        collect_summary_node(
+                            &item,
+                            cli_args,
+                            item_queries,
+                            &mut raw_nodes,
+                            counter,
+                        );
                     }
                 }
 
-                if cli_args.per_source_summary && !nodes.is_empty() {
-                    let mut leaf_map = HashMap::new();
-                    let mut nonleaf = Vec::new();
-
-                    for node in nodes {
-                        match &node {
-                            ItemSummaryNode::Item {
-                                id,
-                                count,
-                                snbt,
-                                children,
-                            } if children.is_empty() => {
-                                let key = (id.clone(), snbt.clone());
-                                *leaf_map.entry(key).or_insert(0) += *count;
-                            }
-                            _ => nonleaf.push(node),
-                        }
-                    }
-
-                    let mut collapsed = Vec::new();
-                    for ((id, snbt), total_count) in leaf_map.into_iter() {
-                        collapsed.push(ItemSummaryNode::new_item(
-                            id,
-                            total_count,
-                            snbt,
-                            Vec::new(),
-                        ));
-                    }
-
-                    collapsed.extend(nonleaf);
-
-                    collapsed.sort_by(|a, b| {
-                        let (a_count, a_id) = match a {
-                            ItemSummaryNode::Item { count, id, .. } => (*count, id.clone()),
-                            _ => (0u64, String::new()),
-                        };
-                        let (b_count, b_id) = match b {
-                            ItemSummaryNode::Item { count, id, .. } => (*count, id.clone()),
-                            _ => (0u64, String::new()),
-                        };
-                        b_count.cmp(&a_count).then(a_id.cmp(&b_id))
-                    });
-
+                if cli_args.per_source_summary && !raw_nodes.is_empty() {
                     let root_label = format!("{source_id} @ {x} {y} {z}");
-                    let root = ItemSummaryNode::new_root(root_label, collapsed);
-                    ptree::print_tree(&root).unwrap();
+                    let mut root = ItemSummaryNode::new_root(root_label, raw_nodes);
+
+                    root.collapse_leaves_recursive();
+
+                    print_tree(&root).unwrap();
                 }
             }
         }
