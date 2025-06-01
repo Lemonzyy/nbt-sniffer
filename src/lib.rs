@@ -18,7 +18,19 @@ use ptree::print_tree;
 use tree::ItemSummaryNode;
 use valence_nbt::Value;
 
-pub const CHUNK_PER_REGION_SIDE: usize = 32;
+const CHUNK_PER_REGION_SIDE: usize = 32;
+
+const NBT_KEY_ID: &str = "id";
+const NBT_KEY_COUNT: &str = "count";
+const NBT_KEY_POS: &str = "Pos";
+const NBT_KEY_ITEMS: &str = "Items";
+const NBT_KEY_INVENTORY: &str = "Inventory";
+const NBT_KEY_ITEM: &str = "Item";
+const NBT_KEY_EQUIPMENT: &str = "equipment";
+const NBT_KEY_PASSENGERS: &str = "Passengers";
+const NBT_KEY_COMPONENTS: &str = "components";
+const NBT_KEY_MINECRAFT_CONTAINER: &str = "minecraft:container";
+const NBT_KEY_MINECRAFT_BUNDLE_CONTENTS: &str = "minecraft:bundle_contents";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Scope {
@@ -294,11 +306,11 @@ fn process_chunk_for_entities(
 /// Helper to get a formatted string for an entity's position.
 fn get_entity_pos_string(entity_nbt: &simdnbt::borrow::NbtCompound) -> String {
     entity_nbt
-        .list("Pos")
+        .list(NBT_KEY_POS)
         .and_then(|pos_list| pos_list.doubles())
         .filter(|doubles| doubles.len() >= 3)
         .map_or_else(
-            || "Unknown Pos".to_string(),
+            || "Unknown Position".to_string(),
             |doubles| format!("{:.2} {:.2} {:.2}", doubles[0], doubles[1], doubles[2]),
         )
 }
@@ -330,15 +342,14 @@ fn process_single_entity(
     cli_args: &CliArgs,
     counter: &mut Counter,
 ) {
-    let Some(id_str) = entity_nbt.string("id") else {
+    let Some(id_str) = entity_nbt.string(NBT_KEY_ID) else {
         return;
     };
     let id = id_str.to_string();
     let pos_str = get_entity_pos_string(&entity_nbt);
 
     let mut summary_nodes = Vec::new();
-
-    for list_field_name in &["Items", "Inventory"] {
+    for list_field_name in &[NBT_KEY_ITEMS, NBT_KEY_INVENTORY] {
         if let Some(item_list) = entity_nbt.list(list_field_name).and_then(|l| l.compounds()) {
             for item_compound in item_list {
                 collect_summary_node(
@@ -352,7 +363,7 @@ fn process_single_entity(
         }
     }
 
-    if let Some(item_compound) = entity_nbt.compound("Item") {
+    if let Some(item_compound) = entity_nbt.compound(NBT_KEY_ITEM) {
         collect_summary_node(
             &item_compound,
             cli_args,
@@ -362,7 +373,7 @@ fn process_single_entity(
         );
     }
 
-    if let Some(holder_compound) = entity_nbt.compound("equipment") {
+    if let Some(holder_compound) = entity_nbt.compound(NBT_KEY_EQUIPMENT) {
         for (_key_in_holder, value_nbt) in holder_compound.iter() {
             if let Some(actual_item_compound) = value_nbt.compound() {
                 collect_summary_node(
@@ -376,7 +387,7 @@ fn process_single_entity(
         }
     }
 
-    if let Some(passengers_list) = entity_nbt.list("Passengers").and_then(|l| l.compounds()) {
+    if let Some(passengers_list) = entity_nbt.list(NBT_KEY_PASSENGERS).and_then(|l| l.compounds()) {
         for passenger_nbt in passengers_list {
             // Recursively process each passenger.
             // The passenger's items will be added to the current entity's summary_nodes
@@ -402,20 +413,20 @@ fn process_block_entity(
     cli_args: &CliArgs,
     counter: &mut Counter,
 ) {
-    let id = block_entity.string("id").unwrap().to_string();
+    let id = block_entity.string(NBT_KEY_ID).unwrap().to_string();
     let x = block_entity.int("x").unwrap();
     let y = block_entity.int("y").unwrap();
     let z = block_entity.int("z").unwrap();
 
     let mut summary_nodes = Vec::new();
-    if let Some(items) = block_entity.list("Items").and_then(|l| l.compounds()) {
+    if let Some(items) = block_entity.list(NBT_KEY_ITEMS).and_then(|l| l.compounds()) {
         for item in items {
             collect_summary_node(&item, cli_args, item_queries, &mut summary_nodes, counter);
         }
     }
 
-    for field in &["item", "RecordItem", "Book"] {
-        if let Some(item) = block_entity.compound(field) {
+    for single_item_field in &[NBT_KEY_ITEM, "RecordItem", "Book"] {
+        if let Some(item) = block_entity.compound(single_item_field) {
             collect_summary_node(&item, cli_args, item_queries, &mut summary_nodes, counter);
         }
     }
@@ -439,8 +450,8 @@ fn collect_summary_node(
     out_nodes: &mut Vec<ItemSummaryNode>,
     global_counter: &mut Counter,
 ) {
-    let id = item_nbt.string("id").unwrap().to_string();
-    let count = item_nbt.int("count").unwrap_or(1) as u64;
+    let id = item_nbt.string(NBT_KEY_ID).unwrap().to_string();
+    let count = item_nbt.int(NBT_KEY_COUNT).unwrap_or(1) as u64;
 
     let matches_filter = if queries.is_empty() {
         true
@@ -455,14 +466,14 @@ fn collect_summary_node(
 
     let mut children = Vec::new();
 
-    if let Some(components) = item_nbt.compound("components") {
+    if let Some(components) = item_nbt.compound(NBT_KEY_COMPONENTS) {
         if let Some(nested_list) = components
-            .list("minecraft:container")
+            .list(NBT_KEY_MINECRAFT_CONTAINER)
             .and_then(|l| l.compounds())
         {
             for nested_entry in nested_list {
-                if let Some(nested_item) = nested_entry.compound("item") {
-                    collect_summary_node(
+                if let Some(nested_item) = nested_entry.compound(NBT_KEY_ITEM) {
+                     collect_summary_node(
                         &nested_item,
                         cli_args,
                         queries,
@@ -474,7 +485,7 @@ fn collect_summary_node(
         }
 
         if let Some(nested_list) = components
-            .list("minecraft:bundle_contents")
+            .list(NBT_KEY_MINECRAFT_BUNDLE_CONTENTS)
             .and_then(|l| l.compounds())
         {
             for nested_entry in nested_list {
@@ -491,7 +502,7 @@ fn collect_summary_node(
 
     if matches_filter {
         let nbt_components = item_nbt
-            .compound("components")
+            .compound(NBT_KEY_COMPONENTS)
             .as_ref()
             .map(convert_simdnbt_to_valence_nbt);
 

@@ -56,6 +56,11 @@ fn main() {
     }
 }
 
+const DIMENSION_SUBFOLDER_MAPPINGS: [(&str, DataType); 2] = [
+    ("region", DataType::BlockEntity),
+    ("entities", DataType::Entity),
+];
+
 fn create_scan_tasks(dimension_roots: &[PathBuf]) -> Vec<ScanTask> {
     let mut tasks = Vec::new();
     for dim_path in dimension_roots {
@@ -65,11 +70,8 @@ fn create_scan_tasks(dimension_roots: &[PathBuf]) -> Vec<ScanTask> {
             .unwrap_or("unknown")
             .to_string();
 
-        for (subfolder, data_type) in [
-            ("region", DataType::BlockEntity),
-            ("entities", DataType::Entity),
-        ] {
-            let folder_path = dim_path.join(subfolder);
+        for (subfolder_name, data_type) in DIMENSION_SUBFOLDER_MAPPINGS {
+            let folder_path = dim_path.join(subfolder_name);
             if folder_path.is_dir() {
                 match list_mca_files(&folder_path) {
                     Ok(files) => {
@@ -86,7 +88,7 @@ fn create_scan_tasks(dimension_roots: &[PathBuf]) -> Vec<ScanTask> {
                     Err(err) => {
                         eprintln!(
                             "Error reading {} folder '{}': {err}",
-                            subfolder,
+                            subfolder_name,
                             folder_path.display()
                         );
                         continue;
