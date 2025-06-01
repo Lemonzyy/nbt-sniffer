@@ -3,9 +3,9 @@ use comfy_table::{Cell, CellAlignment, ContentArrangement, Table, presets};
 use csv::Writer;
 use mc_nbt_scanner::{
     DataType, ScanTask, Scope,
-    cli::{CliArgs, ViewMode},
+    cli::{CliArgs, ViewMode, parse_item_args},
     counter::CounterMap,
-    escape_nbt_string, list_mca_files, parse_item_args, process_task,
+    escape_nbt_string, list_mca_files, process_task,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{

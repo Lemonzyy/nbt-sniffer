@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{ArgGroup, Parser, ValueEnum};
+use valence_nbt::Value;
 
 /// Count items in a Minecraft world (1.21.5+), with optional per-item NBT filters and coordinates
 #[derive(Parser, Debug)]
@@ -56,4 +57,49 @@ pub enum ViewMode {
 
     /// Summarize counts by NBT only
     ByNbt,
+}
+
+/// Represents a query for an item and its optional NBT filters
+#[derive(Debug)]
+pub struct ItemFilter {
+    pub id: Option<String>,
+    pub required_nbt: Option<Value>,
+}
+
+/// Parse raw CLI `item` arguments into `ItemFilter` structs
+/// Each entry is of form `ITEM_ID{nbt}`
+pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
+    raw_items
+        .iter()
+        .map(|entry| {
+            let mut id_str = entry.as_str();
+            let mut nbt_query = None;
+
+            if let Some(start) = entry.find('{')
+                && let Some(end) = entry.rfind('}')
+            {
+                id_str = &entry[..start];
+                let nbt_str = &entry[start..=end];
+                if !nbt_str.is_empty() {
+                    match valence_nbt::snbt::from_snbt_str(nbt_str) {
+                        Ok(parsed) => nbt_query = Some(parsed),
+                        Err(e) => eprintln!("Failed to parse SNBT '{nbt_str}': {e}"),
+                    }
+                }
+            }
+
+            let id = if id_str.is_empty() {
+                None
+            } else if id_str.contains(':') {
+                Some(id_str.to_string())
+            } else {
+                Some(format!("minecraft:{id_str}"))
+            };
+
+            ItemFilter {
+                id,
+                required_nbt: nbt_query,
+            }
+        })
+        .collect()
 }

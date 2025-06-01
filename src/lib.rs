@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use cli::CliArgs;
+use cli::{CliArgs, ItemFilter};
 use conversion::convert_simdnbt_to_valence_nbt;
 use counter::{Counter, CounterMap};
 use mca::RegionReader;
@@ -33,51 +33,6 @@ pub enum DataType {
 pub struct ScanTask {
     pub path: PathBuf,
     pub scope: Scope,
-}
-
-/// Represents a query for an item and its optional NBT filters
-#[derive(Debug)]
-pub struct ItemFilter {
-    pub id: Option<String>,
-    pub required_nbt: Option<Value>,
-}
-
-/// Parse raw CLI `item` arguments into `ItemFilter` structs
-/// Each entry is of form `ITEM_ID{nbt}`
-pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
-    raw_items
-        .iter()
-        .map(|entry| {
-            let mut id_str = entry.as_str();
-            let mut nbt_query = None;
-
-            if let Some(start) = entry.find('{')
-                && let Some(end) = entry.rfind('}')
-            {
-                id_str = &entry[..start];
-                let nbt_str = &entry[start..=end];
-                if !nbt_str.is_empty() {
-                    match valence_nbt::snbt::from_snbt_str(nbt_str) {
-                        Ok(parsed) => nbt_query = Some(parsed),
-                        Err(e) => eprintln!("Failed to parse SNBT '{nbt_str}': {e}"),
-                    }
-                }
-            }
-
-            let id = if id_str.is_empty() {
-                None
-            } else if id_str.contains(':') {
-                Some(id_str.to_string())
-            } else {
-                Some(format!("minecraft:{id_str}"))
-            };
-
-            ItemFilter {
-                id,
-                required_nbt: nbt_query,
-            }
-        })
-        .collect()
 }
 
 pub fn list_mca_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
