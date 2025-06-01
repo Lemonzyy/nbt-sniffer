@@ -4,8 +4,8 @@ use csv::Writer;
 use mc_nbt_scanner::{
     DataType, ScanTask, Scope,
     cli::{CliArgs, ViewMode},
-    counter::{Counter, CounterMap},
-    escape_nbt_string, list_mca_files, parse_item_args, process_region_file,
+    counter::CounterMap,
+    escape_nbt_string, list_mca_files, parse_item_args, process_task,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
@@ -93,22 +93,7 @@ fn main() {
 
     let counter_map = tasks
         .into_par_iter()
-        .map(|ScanTask { path, scope }| match scope.data_type {
-            DataType::BlockEntity => {
-                let mut c = Counter::new();
-                process_region_file(&path, &queries, &args, &mut c);
-                let mut map = CounterMap::new();
-                map.merge_scope(scope, &c);
-                map
-            }
-            DataType::Entity => {
-                let mut c = Counter::new();
-                process_entities_file(&path, &queries, &args, &mut c);
-                let mut map = CounterMap::new();
-                map.merge_scope(scope, &c);
-                map
-            }
-        })
+        .map(|task| process_task(task, &queries, &args))
         .reduce(CounterMap::new, |mut a, b| {
             for (scope, counter) in b.iter() {
                 a.merge_scope(scope.clone(), counter);
@@ -218,15 +203,6 @@ fn main() {
         println!("\nTotal items matched: {}", counter_map.combined().total());
         println!("Scan completed in {:?}", start.elapsed());
     }
-}
-
-fn process_entities_file(
-    path: &Path,
-    queries: &[mc_nbt_scanner::ItemFilter],
-    args: &CliArgs,
-    c: &mut Counter,
-) {
-    // TODO
 }
 
 fn is_dim_root(dir: &Path) -> bool {

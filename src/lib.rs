@@ -10,7 +10,7 @@ use std::{
 
 use cli::CliArgs;
 use conversion::convert_simdnbt_to_valence_nbt;
-use counter::Counter;
+use counter::{Counter, CounterMap};
 use mca::RegionReader;
 use ptree::print_tree;
 use tree::ItemSummaryNode;
@@ -105,15 +105,27 @@ pub fn list_mca_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(mca_files)
 }
 
+pub fn process_task(task: ScanTask, queries: &[ItemFilter], args: &CliArgs) -> CounterMap {
+    let mut counter = Counter::new();
+    match task.scope.data_type {
+        DataType::BlockEntity => process_region_file(&task, queries, args, &mut counter),
+        DataType::Entity => process_entities_file(&task, queries, args, &mut counter),
+    }
+    let mut map = CounterMap::new();
+    map.merge_scope(task.scope, &counter);
+    map
+}
+
 /// Scans one region file, recursively collects nested items inside block-entity inventories,
 /// then prints a collapsed tree for each block-entity (if `--per-source-summary` is set).  
 /// Also merges all found items into the global `counter`.
 pub fn process_region_file(
-    region_file_path: &Path,
+    task: &ScanTask,
     item_queries: &[ItemFilter],
     cli_args: &CliArgs,
     counter: &mut Counter,
 ) {
+    let region_file_path = &task.path;
     let data = match std::fs::read(region_file_path) {
         Ok(d) => d,
         Err(e) => {
@@ -158,28 +170,25 @@ pub fn process_region_file(
                 }
             };
 
-            process_chunk(
-                &chunk,
-                cy,
-                cx,
-                region_file_path,
-                item_queries,
-                cli_args,
-                counter,
-            );
+            process_chunk(&chunk, cy, cx, task, item_queries, cli_args, counter);
         }
     }
+}
+
+fn process_entities_file(task: &ScanTask, queries: &[ItemFilter], args: &CliArgs, c: &mut Counter) {
+    // TODO
 }
 
 fn process_chunk(
     chunk: &mca::RawChunk,
     cy: usize,
     cx: usize,
-    region_file_path: &Path,
+    task: &ScanTask,
     item_queries: &[ItemFilter],
     cli_args: &CliArgs,
     counter: &mut Counter,
 ) {
+    let region_file_path = &task.path;
     let decompressed = match chunk.decompress() {
         Ok(d) => d,
         Err(e) => {
@@ -211,12 +220,13 @@ fn process_chunk(
     };
 
     for block_entity in block_entities {
-        process_block_entity(block_entity, item_queries, cli_args, counter);
+        process_block_entity(block_entity, task, item_queries, cli_args, counter);
     }
 }
 
 fn process_block_entity(
     block_entity: simdnbt::borrow::NbtCompound,
+    task: &ScanTask,
     item_queries: &[ItemFilter],
     cli_args: &CliArgs,
     counter: &mut Counter,
@@ -240,7 +250,7 @@ fn process_block_entity(
     }
 
     if cli_args.per_source_summary && !summary_nodes.is_empty() {
-        let root_label = format!("{id} @ {x} {y} {z}");
+        let root_label = format!("[{}] {id} @ {x} {y} {z}", task.scope.dimension);
         let mut root = ItemSummaryNode::new_root(root_label, summary_nodes);
 
         root.collapse_leaves_recursive();
