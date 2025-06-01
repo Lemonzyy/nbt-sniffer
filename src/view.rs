@@ -11,109 +11,142 @@ use crate::{
 };
 
 pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
-    // Group counters by dimension and data type
-    let mut per_dimension: BTreeMap<String, BTreeMap<DataType, Counter>> = BTreeMap::new();
+    // dimension -> data_type -> Counter
+    let mut grouped: BTreeMap<String, BTreeMap<DataType, Counter>> = BTreeMap::new();
 
-    // Group counters by data type globally (all dimensions)
-    let mut per_data_type: BTreeMap<DataType, Counter> = BTreeMap::new();
+    let mut total_block_entity = Counter::new();
+    let mut total_entity = Counter::new();
+    let mut total_combined = Counter::new();
 
-    // Grand total for all dimensions and data types
-    let mut grand_total = Counter::new();
-
-    // Fill groups
     for (scope, counter) in counter_map.iter() {
-        per_dimension
+        grouped
             .entry(scope.dimension.clone())
             .or_default()
             .entry(scope.data_type.clone())
-            .or_default()
+            .or_insert_with(Counter::new)
             .merge(counter);
 
-        per_data_type
-            .entry(scope.data_type.clone())
-            .or_default()
-            .merge(counter);
-
-        grand_total.merge(counter);
+        match scope.data_type {
+            DataType::BlockEntity => total_block_entity.merge(counter),
+            DataType::Entity => total_entity.merge(counter),
+            _ => {}
+        }
+        total_combined.merge(counter);
     }
 
-    // Helper to print a Counter with title
-    fn print_counter(title: &str, counter: &Counter, args: &CliArgs) {
-        println!("{title}:");
-        display_detailed(counter, args);
-    }
+    let per_dim = args.per_dimension_summary;
+    let per_type = args.per_data_type_summary;
 
-    match (args.per_dimension_summary, args.per_data_type_summary) {
+    match (per_dim, per_type) {
         (false, false) => {
-            // 1) No flag: single grand total for all dimensions and data types
-            print_counter("Total (all dimensions, all data types)", &grand_total, args);
+            // No flags - print total only
+            println!("Total:");
+            print_detailed_counter(&total_combined, args);
         }
         (true, false) => {
-            // 2) --per-dimension-summary
-            // For each dimension: total sum of all data types
-            for (dimension, dt_map) in &per_dimension {
-                let mut total_dim = Counter::new();
-                for counter in dt_map.values() {
-                    total_dim.merge(counter);
+            // Per dimension only
+            for (dimension, types_map) in &grouped {
+                println!("\nDimension: {}", dimension);
+
+                // Sum all data types for this dimension
+                let mut dimension_combined = Counter::new();
+                for counter in types_map.values() {
+                    dimension_combined.merge(counter);
                 }
-                print_counter(
-                    &format!("Dimension: {dimension} (all data types combined)"),
-                    &total_dim,
-                    args,
-                );
+
+                print_detailed_counter(&dimension_combined, args);
             }
-            // Grand total
-            print_counter("Total (all dimensions, all data types)", &grand_total, args);
+
+            println!("\nTotal:");
+            print_detailed_counter(&total_combined, args);
         }
         (false, true) => {
-            // 3) --per-data-type-summary
-            // For each data type: total sum of all dimensions for that data type
-            for (data_type, counter) in &per_data_type {
-                print_counter(
-                    &format!("Data Type: {:?} (all dimensions)", data_type),
-                    counter,
-                    args,
-                );
-            }
-            // Grand total
-            print_counter("Total (all dimensions, all data types)", &grand_total, args);
+            // Per data type only
+            println!("Block Entity:");
+            print_detailed_counter(&total_block_entity, args);
+
+            println!("Entity:");
+            print_detailed_counter(&total_entity, args);
+
+            println!("Total:");
+            print_detailed_counter(&total_combined, args);
         }
         (true, true) => {
-            // 4) both flags
-            // For each dimension:
-            for (dimension, dt_map) in &per_dimension {
-                // a) print table per data type
-                for (data_type, counter) in dt_map {
-                    print_counter(
-                        &format!("Dimension: {dimension} - Data Type: {:?}", data_type),
-                        counter,
-                        args,
-                    );
+            // Both flags
+            for (dimension, types_map) in &grouped {
+                println!("\nDimension: {}", dimension);
+
+                if let Some(block_entity_counter) = types_map.get(&DataType::BlockEntity) {
+                    println!("Block Entity:");
+                    print_detailed_counter(block_entity_counter, args);
                 }
-                // b) total table of that dimension (sum of all data types)
-                let mut total_dim = Counter::new();
-                for counter in dt_map.values() {
-                    total_dim.merge(counter);
+
+                if let Some(entity_counter) = types_map.get(&DataType::Entity) {
+                    println!("Entity:");
+                    print_detailed_counter(entity_counter, args);
                 }
-                print_counter(
-                    &format!("Dimension: {dimension} (all data types combined)"),
-                    &total_dim,
-                    args,
-                );
+
+                let mut dimension_combined = Counter::new();
+                for counter in types_map.values() {
+                    dimension_combined.merge(counter);
+                }
+                println!("Summary:");
+                print_detailed_counter(&dimension_combined, args);
             }
 
-            // For each data type: total sum all dimensions
-            for (data_type, counter) in &per_data_type {
-                print_counter(
-                    &format!("Data Type: {:?} (all dimensions)", data_type),
-                    counter,
-                    args,
-                );
-            }
+            println!("\nBlock Entity:");
+            print_detailed_counter(&total_block_entity, args);
 
-            // Grand total
-            print_counter("Total (all dimensions, all data types)", &grand_total, args);
+            println!("Entity:");
+            print_detailed_counter(&total_entity, args);
+
+            println!("Total:");
+            print_detailed_counter(&total_combined, args);
         }
+    }
+}
+
+/// Helper: print detailed counter with both ID and NBT columns.
+fn print_detailed_counter(counter: &Counter, args: &CliArgs) {
+    // Get all (id, nbt, count) tuples from the detailed counts
+    let mut detailed_vec = Vec::new();
+    for (item_key, &count) in counter.detailed_counts() {
+        detailed_vec.push((item_key.id.clone(), item_key.components_snbt.clone(), count));
+    }
+
+    // Sort by count (descending), then by id, then by nbt
+    detailed_vec.sort_by(|(a_id, a_nbt, a_count), (b_id, b_nbt, b_count)| {
+        b_count
+            .cmp(a_count)
+            .then_with(|| a_id.cmp(b_id))
+            .then_with(|| a_nbt.cmp(b_nbt))
+    });
+
+    if args.csv {
+        print_csv(
+            &["Count", "ID", "NBT"],
+            detailed_vec,
+            |(id, nbt_opt, count)| {
+                let nbt_str = nbt_opt
+                    .as_deref()
+                    .map(escape_nbt_string)
+                    .unwrap_or_else(|| "No NBT".into());
+                vec![count.to_string(), id.clone(), nbt_str]
+            },
+        );
+    } else {
+        let mut table = new_table(&["Count", "ID", "NBT"]);
+        if let Some(col) = table.column_mut(2) {
+            col.set_cell_alignment(CellAlignment::Left);
+        }
+        for (id, nbt_opt, count) in detailed_vec {
+            let nbt_str = nbt_opt
+                .as_deref()
+                .map(escape_nbt_string)
+                .unwrap_or_else(|| "No NBT".into());
+            table.add_row(vec![Cell::new(count), Cell::new(id), Cell::new(nbt_str)]);
+        }
+        println!("{table}");
     }
 }
 
