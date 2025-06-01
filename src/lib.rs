@@ -86,27 +86,32 @@ pub fn process_task(task: ScanTask, queries: &[ItemFilter], args: &CliArgs) -> C
     map
 }
 
-/// Scans one region file, recursively collects nested items inside block-entity inventories,
-/// then prints a collapsed tree for each block-entity (if `--per-source-summary` is set).  
-/// Also merges all found items into the global `counter`.
-pub fn process_region_file(
+/// Generic function to process a region file, iterating through its chunks
+/// and applying a given chunk processing function.
+fn process_any_region_file<F>(
     task: &ScanTask,
     item_queries: &[ItemFilter],
     cli_args: &CliArgs,
     counter: &mut Counter,
-) {
+    process_chunk_fn: F,
+) where
+    F: Fn(&mca::RawChunk, usize, usize, &ScanTask, &[ItemFilter], &CliArgs, &mut Counter),
+{
     let region_file_path = &task.path;
     let data = match std::fs::read(region_file_path) {
         Ok(d) => d,
         Err(e) => {
             if cli_args.verbose {
-                eprintln!("Failed to read file {}: {e}", region_file_path.display());
+                eprintln!(
+                    "Failed to read file {}: {e}",
+                    region_file_path.display()
+                );
             }
             return;
         }
     };
 
-    let region = match RegionReader::new(&data) {
+    let region_reader = match RegionReader::new(&data) {
         Ok(r) => r,
         Err(e) => {
             if cli_args.verbose {
@@ -121,32 +126,49 @@ pub fn process_region_file(
 
     for cy in 0..CHUNK_PER_REGION_SIDE {
         for cx in 0..CHUNK_PER_REGION_SIDE {
-            let chunk = match region.get_chunk(cx, cy) {
+            let chunk_data = match region_reader.get_chunk(cx, cy) {
                 Ok(Some(c)) => c,
                 Ok(None) => {
                     if cli_args.verbose {
-                        eprintln!("No chunk at ({cx}, {cy}) in {}", region_file_path.display());
+                        eprintln!(
+                            "No chunk data at ({cx}, {cy}) in {}",
+                            region_file_path.display()
+                        );
                     }
                     continue;
                 }
                 Err(e) => {
                     if cli_args.verbose {
                         eprintln!(
-                            "Failed to get chunk ({cx}, {cy}) in {}: {e}",
+                            "Failed to get chunk ({cx}, {cy}) from {}: {e}",
                             region_file_path.display()
                         );
                     }
                     continue;
                 }
             };
-
-            process_chunk_for_block_entities(&chunk, cy, cx, task, item_queries, cli_args, counter);
+            process_chunk_fn(&chunk_data, cx, cy, task, item_queries, cli_args, counter);
         }
     }
 }
 
-/// Scans one region file for entities, recursively collects nested items they might contain,
-/// then prints a collapsed tree for each entity (if `--per-source-summary` is set).
+/// Scans one region file for block entities.
+pub fn process_region_file(
+    task: &ScanTask,
+    item_queries: &[ItemFilter],
+    cli_args: &CliArgs,
+    counter: &mut Counter,
+) {
+    process_any_region_file(
+        task,
+        item_queries,
+        cli_args,
+        counter,
+        process_chunk_for_block_entities,
+    );
+}
+
+/// Scans one region file for regular entities.
 /// Also merges all found items into the global `counter`.
 pub fn process_entities_file(
     task: &ScanTask,
@@ -154,68 +176,31 @@ pub fn process_entities_file(
     cli_args: &CliArgs,
     counter: &mut Counter,
 ) {
-    let region_file_path = &task.path;
-    let data = match std::fs::read(region_file_path) {
-        Ok(d) => d,
-        Err(e) => {
-            if cli_args.verbose {
-                eprintln!("Failed to read file {}: {e}", region_file_path.display());
-            }
-            return;
-        }
-    };
-
-    let region = match RegionReader::new(&data) {
-        Ok(r) => r,
-        Err(e) => {
-            if cli_args.verbose {
-                eprintln!(
-                    "Failed to parse region file {}: {e}",
-                    region_file_path.display()
-                );
-            }
-            return;
-        }
-    };
-
-    for cy in 0..CHUNK_PER_REGION_SIDE {
-        for cx in 0..CHUNK_PER_REGION_SIDE {
-            let chunk_data = match region.get_chunk(cx, cy) {
-                Ok(Some(c)) => c,
-                Ok(None) => {
-                    if cli_args.verbose {
-                        eprintln!("No chunk at ({cx}, {cy}) in {}", region_file_path.display());
-                    }
-                    continue;
-                }
-                Err(e) => {
-                    if cli_args.verbose {
-                        eprintln!(
-                            "Failed to get chunk ({cx}, {cy}) in {}: {e}",
-                            region_file_path.display()
-                        );
-                    }
-                    continue;
-                }
-            };
-
-            process_chunk_for_entities(&chunk_data, cx, cy, task, item_queries, cli_args, counter);
-        }
-    }
+    process_any_region_file(
+        task,
+        item_queries,
+        cli_args,
+        counter,
+        process_chunk_for_entities,
+    );
 }
 
-/// Processes a single chunk for block entities.
-fn process_chunk_for_block_entities(
-    chunk: &mca::RawChunk,
+/// Generic function to process NBT data from a chunk for a list of compounds.
+fn process_chunk_nbt_list<F>(
+    chunk_data: &mca::RawChunk,
     cy: usize,
     cx: usize,
     task: &ScanTask,
     item_queries: &[ItemFilter],
     cli_args: &CliArgs,
     counter: &mut Counter,
-) {
+    nbt_list_name: &str,
+    process_nbt_compound_fn: F,
+) where
+    F: Fn(simdnbt::borrow::NbtCompound, &ScanTask, &[ItemFilter], &CliArgs, &mut Counter),
+{
     let region_file_path = &task.path;
-    let decompressed = match chunk.decompress() {
+    let decompressed_data = match chunk_data.decompress() {
         Ok(d) => d,
         Err(e) => {
             if cli_args.verbose {
@@ -227,9 +212,18 @@ fn process_chunk_for_block_entities(
             return;
         }
     };
-    let mut cursor = Cursor::new(decompressed.as_slice());
-    let nbt = match simdnbt::borrow::read(&mut cursor) {
-        Ok(n) => n.unwrap(),
+    let mut cursor = Cursor::new(decompressed_data.as_slice());
+    let nbt_root = match simdnbt::borrow::read(&mut cursor) {
+        Ok(simdnbt::borrow::Nbt::Some(nbt)) => nbt,
+        Ok(simdnbt::borrow::Nbt::None) => {
+            if cli_args.verbose {
+                eprintln!(
+                    "No NBT data found in chunk ({cx}, {cy}) in {}",
+                    region_file_path.display()
+                );
+            }
+            return;
+        }
         Err(e) => {
             if cli_args.verbose {
                 eprintln!(
@@ -241,13 +235,37 @@ fn process_chunk_for_block_entities(
         }
     };
 
-    let Some(block_entities) = nbt.list("block_entities").and_then(|l| l.compounds()) else {
+    let Some(compounds_list) = nbt_root.list(nbt_list_name).and_then(|l| l.compounds()) else {
+        // If the list is not found or is not a list of compounds, this is normal (e.g., chunk with no relevant entities).
         return;
     };
 
-    for block_entity in block_entities {
-        process_block_entity(block_entity, task, item_queries, cli_args, counter);
+    for nbt_compound in compounds_list {
+        process_nbt_compound_fn(nbt_compound, task, item_queries, cli_args, counter);
     }
+}
+
+/// Processes a single chunk for block entities.
+fn process_chunk_for_block_entities(
+    chunk_data: &mca::RawChunk,
+    cx: usize,
+    cy: usize,
+    task: &ScanTask,
+    item_queries: &[ItemFilter],
+    cli_args: &CliArgs,
+    counter: &mut Counter,
+) {
+    process_chunk_nbt_list(
+        chunk_data,
+        cx,
+        cy,
+        task,
+        item_queries,
+        cli_args,
+        counter,
+        "block_entities", // NBT key for block entities in a chunk
+        process_block_entity,
+    );
 }
 
 /// Processes a single chunk for regular entities.
@@ -260,41 +278,17 @@ fn process_chunk_for_entities(
     cli_args: &CliArgs,
     counter: &mut Counter,
 ) {
-    let region_file_path = &task.path;
-    let decompressed = match chunk_data.decompress() {
-        Ok(d) => d,
-        Err(e) => {
-            if cli_args.verbose {
-                eprintln!(
-                    "Failed to decompress chunk ({cx}, {cy}) in {}: {e}",
-                    region_file_path.display()
-                );
-            }
-            return;
-        }
-    };
-    let mut cursor = Cursor::new(decompressed.as_slice());
-
-    let nbt_root = match simdnbt::borrow::read(&mut cursor) {
-        Ok(n) => n.unwrap(),
-        Err(e) => {
-            if cli_args.verbose {
-                eprintln!(
-                    "Failed to read NBT data for chunk ({cx}, {cy}) in {}: {e}",
-                    region_file_path.display()
-                );
-            }
-            return;
-        }
-    };
-
-    let Some(entities) = nbt_root.list("Entities").and_then(|l| l.compounds()) else {
-        return;
-    };
-
-    for entity_nbt in entities {
-        process_single_entity(entity_nbt, task, item_queries, cli_args, counter);
-    }
+    process_chunk_nbt_list(
+        chunk_data,
+        cx,
+        cy,
+        task,
+        item_queries,
+        cli_args,
+        counter,
+        "Entities", // NBT key for entities in a chunk
+        process_single_entity,
+    );
 }
 
 /// Helper to get a formatted string for an entity's position.
@@ -307,6 +301,25 @@ fn get_entity_pos_string(entity_nbt: &simdnbt::borrow::NbtCompound) -> String {
             || "Unknown Pos".to_string(),
             |doubles| format!("{:.2} {:.2} {:.2}", doubles[0], doubles[1], doubles[2]),
         )
+}
+
+/// Prints a per-source summary tree if the corresponding CLI flag is enabled.
+fn print_per_source_summary_if_enabled(
+    cli_args: &CliArgs,
+    dimension: &str,
+    source_id: &str,
+    source_location: &str,
+    summary_nodes: Vec<ItemSummaryNode>, // Consumes the nodes
+) {
+    if cli_args.per_source_summary && !summary_nodes.is_empty() {
+        let root_label = format!("[{dimension}] {source_id} @ {source_location}");
+        let mut root = ItemSummaryNode::new_root(root_label, summary_nodes);
+        root.collapse_leaves_recursive();
+        if let Err(e) = print_tree(&root) {
+            // Handle error from print_tree, e.g., by logging to stderr
+            eprintln!("Error printing tree summary for {source_id}: {e}");
+        }
+    }
 }
 
 /// Processes a single entity's NBT data.
@@ -373,14 +386,13 @@ fn process_single_entity(
         }
     }
 
-    if cli_args.per_source_summary && !summary_nodes.is_empty() {
-        let root_label = format!("[{}] {id} @ {pos_str}", task.scope.dimension);
-        let mut root = ItemSummaryNode::new_root(root_label, summary_nodes);
-
-        root.collapse_leaves_recursive();
-
-        print_tree(&root).unwrap();
-    }
+    print_per_source_summary_if_enabled(
+        cli_args,
+        &task.scope.dimension,
+        &id,
+        &pos_str,
+        summary_nodes,
+    );
 }
 
 fn process_block_entity(
@@ -408,14 +420,14 @@ fn process_block_entity(
         }
     }
 
-    if cli_args.per_source_summary && !summary_nodes.is_empty() {
-        let root_label = format!("[{}] {id} @ {x} {y} {z}", task.scope.dimension);
-        let mut root = ItemSummaryNode::new_root(root_label, summary_nodes);
-
-        root.collapse_leaves_recursive();
-
-        print_tree(&root).unwrap();
-    }
+    let location_str = format!("{x} {y} {z}");
+    print_per_source_summary_if_enabled(
+        cli_args,
+        &task.scope.dimension,
+        &id,
+        &location_str,
+        summary_nodes,
+    );
 }
 
 /// Recursively builds an `ItemSummaryNode` for `item_nbt` and all nested children (under `components -> minecraft:container` or `components -> minecraft:bundle_contents`),
@@ -435,11 +447,8 @@ fn collect_summary_node(
     } else {
         let valence_nbt = convert_simdnbt_to_valence_nbt(item_nbt);
         queries.iter().any(|q| {
-            let id_ok = q.id.as_ref().is_none_or(|qid| qid == &id);
-            let nbt_ok = q
-                .required_nbt
-                .as_ref()
-                .is_none_or(|req| nbt_is_subset(&valence_nbt, req));
+            let id_ok = q.id.as_ref().map_or(true, |qid| qid == &id);
+            let nbt_ok = q.required_nbt.as_ref().map_or(true, |req| nbt_is_subset(&valence_nbt, req));
             id_ok && nbt_ok
         })
     };

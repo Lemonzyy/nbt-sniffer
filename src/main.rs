@@ -105,6 +105,13 @@ fn is_dim_root(dir: &Path) -> bool {
 pub fn get_all_dimension_roots(world_root: &Path) -> Vec<PathBuf> {
     WalkDir::new(world_root)
         .into_iter()
+        // filter_entry is used to prune the search space.
+        // We want to find directories that are dimension roots.
+        // If a directory is itself a dimension root, we keep it (and WalkDir will explore it,
+        // but our final .filter() will pick the root itself).
+        // If a directory is NOT a dimension root, we only want to explore it further
+        // if NONE of its parent directories were dimension roots. This prevents finding
+        // e.g. a "region" folder deep inside an already identified dimension structure.
         .filter_entry(|entry| {
             let path = entry.path();
             if is_dim_root(path) {
