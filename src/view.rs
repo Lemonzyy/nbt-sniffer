@@ -369,3 +369,249 @@ fn format_nbt_string(nbt_opt: &Option<String>) -> String {
         .map(escape_nbt_string)
         .unwrap_or_else(|| "No NBT".into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DataType, Scope,
+        cli::{CliArgs, ViewMode},
+        counter::{Counter, CounterMap},
+    };
+    use std::path::PathBuf;
+    use valence_nbt::Value;
+
+    fn nbt_val(s: &str) -> Value {
+        valence_nbt::snbt::from_snbt_str(s).expect("Failed to parse SNBT for test")
+    }
+
+    fn create_sample_counter_map() -> CounterMap {
+        let mut map = CounterMap::new();
+
+        let scope_ow_be = Scope {
+            dimension: "overworld".to_string(),
+            data_type: DataType::BlockEntity,
+        };
+        let mut counter_ow_be = Counter::new();
+        counter_ow_be.add("minecraft:chest".to_string(), None, 10);
+        counter_ow_be.add("minecraft:furnace".to_string(), None, 5);
+        map.merge_scope(scope_ow_be, &counter_ow_be);
+
+        let scope_ow_e = Scope {
+            dimension: "overworld".to_string(),
+            data_type: DataType::Entity,
+        };
+        let mut counter_ow_e = Counter::new();
+        let nbt_damaged_sword = nbt_val("{components:{\"minecraft:damage\":50}}");
+        counter_ow_e.add(
+            "minecraft:iron_sword".to_string(),
+            Some(&nbt_damaged_sword),
+            5,
+        ); // 5 damaged iron swords
+        counter_ow_e.add("minecraft:rotten_flesh".to_string(), None, 15); // 15 rotten flesh
+        map.merge_scope(scope_ow_e, &counter_ow_e);
+
+        let scope_nether_be = Scope {
+            dimension: "nether".to_string(),
+            data_type: DataType::BlockEntity,
+        };
+        let mut counter_nether_be = Counter::new();
+        counter_nether_be.add("minecraft:chest".to_string(), None, 3); // Another chest
+        map.merge_scope(scope_nether_be, &counter_nether_be);
+
+        map
+    }
+
+    #[test]
+    fn test_aggregated_data_new() {
+        let counter_map = create_sample_counter_map();
+        let agg_data = AggregatedData::new(&counter_map);
+
+        // Check grouped data
+        assert_eq!(agg_data.grouped.len(), 2); // overworld, nether
+        assert_eq!(agg_data.grouped.get("overworld").unwrap().len(), 2); // BlockEntity, Entity
+        assert_eq!(
+            agg_data
+                .grouped
+                .get("overworld")
+                .unwrap()
+                .get(&DataType::BlockEntity)
+                .unwrap()
+                .total(),
+            15
+        ); // 10 chests + 5 furnaces
+        assert_eq!(
+            agg_data
+                .grouped
+                .get("overworld")
+                .unwrap()
+                .get(&DataType::Entity)
+                .unwrap()
+                .total(),
+            20 // 5 iron_swords + 15 rotten_flesh
+        ); // 20 zombies
+        assert_eq!(
+            agg_data
+                .grouped
+                .get("nether")
+                .unwrap()
+                .get(&DataType::BlockEntity)
+                .unwrap()
+                .total(),
+            3
+        ); // 3 chests
+
+        // Check totals
+        assert_eq!(agg_data.total_block_entity.total(), 15 + 3);
+        assert_eq!(agg_data.total_entity.total(), 20);
+        assert_eq!(agg_data.total_combined.total(), 15 + 3 + 20);
+
+        // Check dimension_combined
+        assert_eq!(agg_data.dimension_combined("overworld").total(), 15 + 20);
+        assert_eq!(agg_data.dimension_combined("nether").total(), 3);
+        assert_eq!(agg_data.dimension_combined("unknown_dim").total(), 0);
+    }
+
+    #[test]
+    fn test_aggregated_id_counts_data_new() {
+        let counter_map = create_sample_counter_map();
+        let agg_id_data = AggregatedIdCountsData::new(&counter_map);
+
+        // Check grouped data
+        let ov_be_counts = agg_id_data
+            .grouped
+            .get("overworld")
+            .unwrap()
+            .get(&DataType::BlockEntity)
+            .unwrap();
+        assert_eq!(ov_be_counts.get("minecraft:chest"), Some(&10));
+        assert_eq!(ov_be_counts.get("minecraft:furnace"), Some(&5));
+
+        let ov_e_counts = agg_id_data
+            .grouped
+            .get("overworld")
+            .unwrap()
+            .get(&DataType::Entity)
+            .unwrap();
+        assert_eq!(ov_e_counts.get("minecraft:iron_sword"), Some(&5));
+        assert_eq!(ov_e_counts.get("minecraft:rotten_flesh"), Some(&15));
+
+        // Check totals
+        assert_eq!(
+            agg_id_data.total_block_entity.get("minecraft:chest"),
+            Some(&13)
+        ); // 10 + 3
+        assert_eq!(
+            agg_id_data.total_block_entity.get("minecraft:furnace"),
+            Some(&5)
+        );
+        assert_eq!(
+            agg_id_data.total_entity.get("minecraft:iron_sword"),
+            Some(&5)
+        );
+        assert_eq!(
+            agg_id_data.total_entity.get("minecraft:rotten_flesh"),
+            Some(&15)
+        );
+        assert_eq!(agg_id_data.total_combined.get("minecraft:chest"), Some(&13));
+        assert_eq!(
+            agg_id_data.total_combined.get("minecraft:iron_sword"),
+            Some(&5)
+        );
+        assert_eq!(
+            agg_id_data.total_combined.get("minecraft:rotten_flesh"),
+            Some(&15)
+        );
+
+        // Check dimension_combined
+        let ov_dim_combined = agg_id_data.dimension_combined("overworld");
+        assert_eq!(ov_dim_combined.get("minecraft:chest"), Some(&10));
+        assert_eq!(ov_dim_combined.get("minecraft:furnace"), Some(&5));
+        assert_eq!(ov_dim_combined.get("minecraft:iron_sword"), Some(&5));
+        assert_eq!(ov_dim_combined.get("minecraft:rotten_flesh"), Some(&15));
+    }
+
+    // Helper for execute_summary_printing tests
+    fn mock_cli_args() -> CliArgs {
+        CliArgs {
+            world_path: PathBuf::from("dummy"),
+            all: true,
+            items: vec![],
+            view: ViewMode::ById,
+            csv: false,
+            show_nbt: false,
+            per_source_summary: false,
+            per_dimension_summary: false,
+            per_data_type_summary: false,
+            verbose: false,
+        }
+    }
+
+    #[test]
+    fn test_execute_summary_printing_logic() {
+        let counter_map = create_sample_counter_map();
+        let data_provider = AggregatedIdCountsData::new(&counter_map); // Using IdCounts for simplicity
+        let mut printed_labels: Vec<String> = Vec::new();
+
+        // Case 1: No per_dimension or per_data_type
+        let mut args = mock_cli_args();
+        {
+            let mut print_fn_case1 = |_: &HashMap<String, u64>, label: &str| {
+                printed_labels.push(label.to_string());
+            };
+            execute_summary_printing(&data_provider, &args, &mut print_fn_case1);
+        }
+        assert_eq!(printed_labels, vec!["Total"]);
+        printed_labels.clear();
+
+        // Case 2: Per dimension only
+        args.per_dimension_summary = true;
+        {
+            let mut print_fn_case2 = |_: &HashMap<String, u64>, label: &str| {
+                printed_labels.push(label.to_string());
+            };
+            execute_summary_printing(&data_provider, &args, &mut print_fn_case2);
+        }
+        assert_eq!(
+            printed_labels,
+            vec!["Dimension: nether", "Dimension: overworld", "Total"]
+        );
+        printed_labels.clear();
+        args.per_dimension_summary = false; // Reset
+
+        // Case 3: Per data type only
+        args.per_data_type_summary = true;
+        {
+            let mut print_fn_case3 = |_: &HashMap<String, u64>, label: &str| {
+                printed_labels.push(label.to_string());
+            };
+            execute_summary_printing(&data_provider, &args, &mut print_fn_case3);
+        }
+        assert_eq!(printed_labels, vec!["Block Entity", "Entity", "Total"]);
+        printed_labels.clear();
+
+        // Case 4: Both per_dimension and per_data_type
+        // Note: The order of dimensions from BTreeMap keys() will be alphabetical.
+        args.per_dimension_summary = true;
+        args.per_data_type_summary = true;
+        {
+            let mut print_fn_case4 = |_: &HashMap<String, u64>, label: &str| {
+                printed_labels.push(label.to_string());
+            };
+            execute_summary_printing(&data_provider, &args, &mut print_fn_case4);
+        }
+        assert_eq!(
+            printed_labels,
+            vec![
+                "Block Entity", // (within nether, due to println! in execute_summary_printing)
+                "Summary",      // (for nether)
+                "Block Entity", // (within overworld)
+                "Entity",       // (within overworld)
+                "Summary",      // (for overworld)
+                "\nBlock Entity",
+                "Entity",
+                "Total"
+            ]
+        );
+    }
+}
