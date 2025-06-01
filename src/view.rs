@@ -286,7 +286,7 @@ pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
         total_combined.merge(counter);
     }
 
-    let per_dim = args.per_source_summary;
+    let per_dim = args.per_dimension_summary;
     let per_type = args.per_data_type_summary;
 
     match (per_dim, per_type) {
