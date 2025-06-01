@@ -4,7 +4,7 @@ use csv::Writer;
 use mc_nbt_scanner::{
     DataType, ScanTask, Scope,
     cli::{CliArgs, ViewMode, parse_item_args},
-    counter::CounterMap,
+    counter::{Counter, CounterMap},
     escape_nbt_string, list_mca_files, process_task,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -103,8 +103,11 @@ fn main() {
 
     match args.view {
         ViewMode::Detailed => {
+            let mut combined = Counter::new();
+
             for (scope, counter) in counter_map.iter() {
-                println!("\n{scope:?}");
+                println!("\nDimension: {}", scope.dimension);
+                println!("Data Type: {}", scope.data_type);
                 let mut detailed_vec = counter.detailed_counts().iter().collect::<Vec<_>>();
                 detailed_vec.sort_by(|(a_key, a_count), (b_key, b_count)| {
                     b_count.cmp(a_count).then_with(|| a_key.id.cmp(&b_key.id))
@@ -138,6 +141,44 @@ fn main() {
                     }
                     println!("{table}");
                 }
+
+                combined.merge(counter);
+            }
+
+            println!("\nTotal:");
+
+            let mut detailed_vec = combined.detailed_counts().iter().collect::<Vec<_>>();
+            detailed_vec.sort_by(|(a_key, a_count), (b_key, b_count)| {
+                b_count.cmp(a_count).then_with(|| a_key.id.cmp(&b_key.id))
+            });
+
+            if args.csv {
+                print_csv(&["Count", "Item", "NBT"], detailed_vec, |(key, &count)| {
+                    let nbt_str = key
+                        .components_snbt
+                        .as_deref()
+                        .map(escape_nbt_string)
+                        .unwrap_or_default();
+                    vec![count.to_string(), key.id.clone(), nbt_str]
+                });
+            } else {
+                let mut table = new_table(&["Count", "Item", "NBT"]);
+                if let Some(col) = table.column_mut(2) {
+                    col.set_cell_alignment(CellAlignment::Left);
+                }
+                for (key, &count) in detailed_vec {
+                    let nbt_cell = key
+                        .components_snbt
+                        .as_deref()
+                        .map(escape_nbt_string)
+                        .unwrap_or_default();
+                    table.add_row(vec![
+                        Cell::new(count),
+                        Cell::new(&key.id),
+                        Cell::new(nbt_cell),
+                    ]);
+                }
+                println!("{table}");
             }
         }
 

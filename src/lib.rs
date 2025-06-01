@@ -4,6 +4,7 @@ pub mod counter;
 pub mod tree;
 
 use std::{
+    fmt,
     io::Cursor,
     path::{Path, PathBuf},
 };
@@ -28,6 +29,19 @@ pub struct Scope {
 pub enum DataType {
     BlockEntity,
     Entity,
+}
+
+impl fmt::Display for DataType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                DataType::BlockEntity => "Block Entity",
+                DataType::Entity => "Entity",
+            }
+        )
+    }
 }
 
 pub struct ScanTask {
