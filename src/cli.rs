@@ -30,7 +30,7 @@ pub struct CliArgs {
     pub view: ViewMode,
 
     /// Output raw CSV instead of a formatted table
-    #[arg(long, conflicts_with = "per_source_summary")]
+    #[arg(long, conflicts_with_all(["per_source_summary", "per_dimension_summary", "per_data_type_summary"]))]
     pub csv: bool,
 
     /// Show full NBT data in item summaries
@@ -40,6 +40,14 @@ pub struct CliArgs {
     /// Show a tree summary per source
     #[arg(long, conflicts_with = "csv")]
     pub per_source_summary: bool,
+
+    /// Show a summary per dimension in addition to the total counts across all dimensions
+    #[arg(long, conflicts_with = "csv")]
+    pub per_dimension_summary: bool,
+
+    /// Show a summary per data type in addition to the total counts across all dimensions
+    #[arg(long, conflicts_with = "csv")]
+    pub per_data_type_summary: bool,
 
     /// Increase output verbosity
     #[arg(short, long)]

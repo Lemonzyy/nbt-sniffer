@@ -28,7 +28,7 @@ impl fmt::Display for ItemKey {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Counter {
     counts: HashMap<ItemKey, u64>,
 }
