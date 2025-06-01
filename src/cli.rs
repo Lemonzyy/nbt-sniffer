@@ -111,3 +111,93 @@ pub fn parse_item_args(raw_items: &[String]) -> Vec<ItemFilter> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use valence_nbt::compound;
+
+    #[test]
+    fn test_parse_item_args_simple_id() {
+        let args = vec!["diamond".to_string()];
+        let filters = parse_item_args(&args);
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].id, Some("minecraft:diamond".to_string()));
+        assert!(filters[0].required_nbt.is_none());
+    }
+
+    #[test]
+    fn test_parse_item_args_namespaced_id() {
+        let args = vec!["custom:item".to_string()];
+        let filters = parse_item_args(&args);
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].id, Some("custom:item".to_string()));
+        assert!(filters[0].required_nbt.is_none());
+    }
+
+    #[test]
+    fn test_parse_item_args_id_with_simple_nbt() {
+        let args = vec!["stone{a:1b}".to_string()];
+        let filters = parse_item_args(&args);
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].id, Some("minecraft:stone".to_string()));
+        assert_eq!(
+            filters[0].required_nbt,
+            Some(compound! { "a" => 1i8 }.into())
+        );
+    }
+
+    #[test]
+    fn test_parse_item_args_id_with_complex_nbt() {
+        let args = vec!["shulker_box{components:{\"minecraft:container\":[{slot:0b,item:{id:\"minecraft:diamond\",count:1b}}]}}".to_string()];
+        let filters = parse_item_args(&args);
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].id, Some("minecraft:shulker_box".to_string()));
+        let expected_nbt = valence_nbt::snbt::from_snbt_str("{components:{\"minecraft:container\":[{slot:0b,item:{id:\"minecraft:diamond\",count:1b}}]}}").unwrap();
+        assert_eq!(filters[0].required_nbt, Some(expected_nbt));
+    }
+
+    #[test]
+    fn test_parse_item_args_nbt_only() {
+        let args = vec!["{components:{\"minecraft:custom_name\":\"Special\"}}".to_string()];
+        let filters = parse_item_args(&args);
+        assert_eq!(filters.len(), 1);
+        assert!(filters[0].id.is_none());
+        let expected_nbt = valence_nbt::snbt::from_snbt_str(
+            "{components:{\"minecraft:custom_name\":\"Special\"}}",
+        )
+        .unwrap();
+        assert_eq!(filters[0].required_nbt, Some(expected_nbt));
+    }
+
+    #[test]
+    fn test_parse_item_args_invalid_nbt_string() {
+        // This test relies on eprintln! for error indication, actual behavior is that NBT is None
+        let args = vec!["iron_ingot{invalid_nbt:}".to_string()];
+        let filters = parse_item_args(&args);
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0].id, Some("minecraft:iron_ingot".to_string()));
+        assert!(
+            filters[0].required_nbt.is_none(),
+            "NBT should be None for invalid SNBT"
+        );
+    }
+
+    #[test]
+    fn test_parse_item_args_multiple_items() {
+        let args = vec![
+            "diamond".to_string(),
+            "gold_ingot{components:{\"minecraft:custom_data\":{foo:\"bar\"}}}".to_string(),
+        ];
+        let filters = parse_item_args(&args);
+        assert_eq!(filters.len(), 2);
+        assert_eq!(filters[0].id, Some("minecraft:diamond".to_string()));
+        assert!(filters[0].required_nbt.is_none());
+        assert_eq!(filters[1].id, Some("minecraft:gold_ingot".to_string()));
+        let expected_nbt_for_gold = valence_nbt::snbt::from_snbt_str(
+            "{components:{\"minecraft:custom_data\":{foo:\"bar\"}}}",
+        )
+        .unwrap();
+        assert_eq!(filters[1].required_nbt, Some(expected_nbt_for_gold));
+    }
+}
