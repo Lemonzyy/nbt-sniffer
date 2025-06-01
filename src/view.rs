@@ -10,7 +10,6 @@ use crate::{
     escape_nbt_string,
 };
 
-// Common data aggregation for all view types
 struct AggregatedData {
     grouped: BTreeMap<String, BTreeMap<DataType, Counter>>,
     total_block_entity: Counter,
@@ -30,13 +29,12 @@ impl AggregatedData {
                 .entry(scope.dimension.clone())
                 .or_default()
                 .entry(scope.data_type.clone())
-                .or_insert_with(Counter::new)
+                .or_default()
                 .merge(counter);
 
             match scope.data_type {
                 DataType::BlockEntity => total_block_entity.merge(counter),
                 DataType::Entity => total_entity.merge(counter),
-                _ => {}
             }
             total_combined.merge(counter);
         }
@@ -60,7 +58,6 @@ impl AggregatedData {
     }
 }
 
-// Generic function to handle all summary combinations
 fn print_summaries<F>(data: &AggregatedData, args: &CliArgs, mut print_fn: F)
 where
     F: FnMut(&Counter, &str),
@@ -68,9 +65,9 @@ where
     match (args.per_dimension_summary, args.per_data_type_summary) {
         (false, false) => print_fn(&data.total_combined, "Total"),
         (true, false) => {
-            for (dimension, _) in &data.grouped {
+            for dimension in data.grouped.keys() {
                 let combined = data.dimension_combined(dimension);
-                print_fn(&combined, &format!("Dimension: {}", dimension));
+                print_fn(&combined, &format!("Dimension: {dimension}"));
             }
             print_fn(&data.total_combined, "Total");
         }
@@ -81,7 +78,7 @@ where
         }
         (true, true) => {
             for (dimension, types_map) in &data.grouped {
-                println!("\nDimension: {}", dimension);
+                println!("\nDimension: {dimension}");
 
                 if let Some(counter) = types_map.get(&DataType::BlockEntity) {
                     print_fn(counter, "Block Entity");
@@ -105,7 +102,7 @@ pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
     let data = AggregatedData::new(counter_map);
     print_summaries(&data, args, |counter, label| {
         if !label.starts_with('\n') {
-            println!("{}:", label);
+            println!("{label}:");
         } else {
             println!("{}:", &label[1..]);
         }
@@ -133,7 +130,7 @@ pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
 
         if !label.starts_with('\n') && !label.starts_with("Total") && !label.starts_with("Summary")
         {
-            println!("{}:", display_label);
+            println!("{display_label}:");
         } else {
             println!("{}:", &display_label.trim_start_matches('\n'));
         }
@@ -142,7 +139,6 @@ pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
 }
 
 pub fn view_by_id(counter_map: &CounterMap, args: &CliArgs) {
-    // ID view needs different data structure - keep original logic but simplified
     let mut grouped: BTreeMap<String, BTreeMap<DataType, HashMap<String, u64>>> = BTreeMap::new();
     let mut total_block_entity: HashMap<String, u64> = HashMap::new();
     let mut total_entity: HashMap<String, u64> = HashMap::new();
@@ -164,7 +160,6 @@ pub fn view_by_id(counter_map: &CounterMap, args: &CliArgs) {
                     *total_block_entity.entry(id.clone()).or_default() += count
                 }
                 DataType::Entity => *total_entity.entry(id.clone()).or_default() += count,
-                _ => {}
             }
         }
     }
@@ -176,7 +171,7 @@ pub fn view_by_id(counter_map: &CounterMap, args: &CliArgs) {
         }
         (true, false) => {
             for (dimension, types_map) in &grouped {
-                println!("\nDimension: {}", dimension);
+                println!("\nDimension: {dimension}");
                 let mut combined: HashMap<String, u64> = HashMap::new();
                 for map in types_map.values() {
                     for (id, count) in map {
@@ -199,11 +194,11 @@ pub fn view_by_id(counter_map: &CounterMap, args: &CliArgs) {
         }
         (true, true) => {
             for (dimension, types_map) in &grouped {
-                println!("\nDimension: {}", dimension);
+                println!("\nDimension: {dimension}");
 
                 for data_type in &[DataType::BlockEntity, DataType::Entity] {
                     if let Some(id_map) = types_map.get(data_type) {
-                        println!("{}:", data_type);
+                        println!("{data_type}:");
                         print_id_map(id_map, args);
                     }
                 }
@@ -253,7 +248,7 @@ fn print_detailed_counter(counter: &Counter, args: &CliArgs) {
                 vec![Cell::new(count), Cell::new(id), Cell::new(nbt_str)],
             )
         },
-        Some(2), // Left-align NBT column
+        Some(2),
     );
 }
 
@@ -292,11 +287,10 @@ fn print_nbt_counter(counter: &Counter, args: &CliArgs) {
                 vec![Cell::new(count), Cell::new(nbt_str)],
             )
         },
-        Some(1), // Left-align NBT column
+        Some(1),
     );
 }
 
-// Generic table/CSV printer
 fn print_table_or_csv<T, F>(
     headers: &[&str],
     data: Vec<T>,
@@ -326,10 +320,10 @@ fn print_table_or_csv<T, F>(
                     .map(|&h| Cell::new(h).set_alignment(CellAlignment::Center)),
             );
 
-        if let Some(col_idx) = left_align_col {
-            if let Some(col) = table.column_mut(col_idx) {
-                col.set_cell_alignment(CellAlignment::Left);
-            }
+        if let Some(col_idx) = left_align_col
+            && let Some(col) = table.column_mut(col_idx)
+        {
+            col.set_cell_alignment(CellAlignment::Left);
         }
 
         for item in data {
