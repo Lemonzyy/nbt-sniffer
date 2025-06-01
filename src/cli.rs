@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{ArgGroup, Parser, ValueEnum};
 use valence_nbt::Value;
 
-/// Count items in a Minecraft world (1.21.5+), with optional per-item NBT filters and coordinates
+/// Count items in a Minecraft world, with optional per-item NBT filters and coordinates
 #[derive(Parser, Debug)]
 #[command(group(ArgGroup::new("mode").args(["all", "items"]).required(true)))]
 pub struct CliArgs {
