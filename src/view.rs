@@ -223,15 +223,6 @@ pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
 
 pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
     let data_provider = AggregatedData::new(counter_map);
-
-    if args.per_dimension_summary && !args.per_data_type_summary {
-        println!("== Per-dimension summary ==");
-    } else if !args.per_dimension_summary && args.per_data_type_summary {
-        println!("== Per-data-type summary ==");
-    } else if args.per_dimension_summary && args.per_data_type_summary {
-        println!("== Both per-dimension and per-data-type summary ==");
-    }
-
     execute_summary_printing(&data_provider, args, |counter_summary, label| {
         let display_label = match label {
             "Block Entity" => "Total Block Entity",
