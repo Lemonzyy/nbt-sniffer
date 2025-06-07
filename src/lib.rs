@@ -432,7 +432,7 @@ pub fn extract_single_player_uuid_from_level_dat(
         if decompressor.read_to_end(&mut decompressed_data).is_ok() {
             let mut cursor = Cursor::new(decompressed_data.as_slice());
             // We need to ensure nbt_root lives as long as player_compound if we don't copy
-            // Since get_uuid_from_player_nbt takes a reference, this is fine.
+            // Since get_uuid_from_nbt takes a reference, this is fine.
             if let Ok(simdnbt::borrow::Nbt::Some(nbt_root)) = simdnbt::borrow::read(&mut cursor) {
                 if let Some(player_compound) = nbt_root
                     .compound(nbt_utils::NBT_KEY_PLAYER_DATA)
@@ -791,7 +791,7 @@ pub fn escape_nbt_string(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::nbt_is_subset; // Use super to access the function in the parent module
+    use super::nbt_is_subset;
     use valence_nbt::Value;
     use valence_nbt::snbt::from_snbt_str;
 

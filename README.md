@@ -8,7 +8,7 @@
 - Filters items by ID and/or NBT data (SNBT format).
 - Multiple views: `detailed` (ID+NBT), `by-id`, `by-nbt`.
 - Optional summaries: per-dimension, per-data-type, per-source (tree view).
-- Output formats: Formatted tables or CSV.
+- Output formats: Formatted tables (or in the future: JSON).
 - Parallel processing for speed.
 
 ## Usage
@@ -24,7 +24,6 @@ mc_nbt_scanner <WORLD_PATH> --all [OPTIONS]
 - `--all`: Count all items.
 - `--item <ITEM_ID[{NBT_DATA}]>`: Specify item(s) to count (e.g., `minecraft:diamond`, `stone{a:1b}`).
 - `--view <MODE>`: `by-id` (default), `by-nbt`, `detailed`.
-- `--csv`: Output as CSV.
 - `--show-nbt`: Show full NBT in detailed view.
 - `--per-source-summary`: Tree summary for items per source.
 - `--per-dimension-summary`: Summary per dimension.

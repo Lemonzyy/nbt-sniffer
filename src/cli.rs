@@ -29,24 +29,20 @@ pub struct CliArgs {
     #[arg(long, value_enum, default_value_t = ViewMode::ById)]
     pub view: ViewMode,
 
-    /// Output raw CSV instead of a formatted table
-    #[arg(long, conflicts_with_all(["per_source_summary", "per_dimension_summary", "per_data_type_summary"]))]
-    pub csv: bool,
-
     /// Show full NBT data in item summaries
     #[arg(long)]
     pub show_nbt: bool,
 
     /// Show a tree summary per source
-    #[arg(long, conflicts_with = "csv")]
+    #[arg(long)]
     pub per_source_summary: bool,
 
     /// Show a summary per dimension in addition to the total counts across all dimensions
-    #[arg(long, conflicts_with = "csv")]
+    #[arg(long)]
     pub per_dimension_summary: bool,
 
     /// Show a summary per data type in addition to the total counts across all dimensions
-    #[arg(long, conflicts_with = "csv")]
+    #[arg(long)]
     pub per_data_type_summary: bool,
 
     /// Increase output verbosity

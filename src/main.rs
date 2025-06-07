@@ -106,7 +106,7 @@ fn main() {
         ViewMode::ByNbt => view_by_nbt(&counter_map, &args),
     }
 
-    if !args.csv && !counter_map.is_empty() {
+    if !counter_map.is_empty() {
         println!("\nTotal items matched: {}", counter_map.combined().total());
         println!("Scan completed in {:?}", start.elapsed());
     }

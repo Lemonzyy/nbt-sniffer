@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
 use comfy_table::{Cell, CellAlignment, ContentArrangement, Table, presets};
-use csv::Writer;
 
 use crate::{
     DataType,
@@ -292,7 +291,7 @@ pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
         } else {
             println!("{}:", &label[1..]);
         }
-        print_detailed_counter(counter_summary, args);
+        print_detailed_counter(counter_summary);
     });
 }
 
@@ -312,7 +311,7 @@ pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
         } else {
             println!("{}:", &display_label.trim_start_matches('\n'));
         }
-        print_nbt_counter(counter_summary, args);
+        print_nbt_counter(counter_summary);
     });
 }
 
@@ -324,11 +323,11 @@ pub fn view_by_id(counter_map: &CounterMap, args: &CliArgs) {
             effective_label = label.trim_start_matches('\n').to_string();
         }
         println!("{effective_label}:");
-        print_id_map(id_map_summary, args);
+        print_id_map(id_map_summary);
     });
 }
 
-fn print_detailed_counter(counter: &Counter, args: &CliArgs) {
+fn print_detailed_counter(counter: &Counter) {
     let mut detailed_vec: Vec<_> = counter
         .detailed_counts()
         .iter()
@@ -342,101 +341,75 @@ fn print_detailed_counter(counter: &Counter, args: &CliArgs) {
             .then_with(|| a_nbt.cmp(b_nbt))
     });
 
-    print_table_or_csv(
+    print_table(
         &["Count", "ID", "NBT"],
         detailed_vec,
-        args,
         |(id, nbt_opt, count)| {
             let nbt_str = format_nbt_string(nbt_opt);
-            (
-                vec![count.to_string(), id.clone(), nbt_str.clone()],
-                vec![Cell::new(count), Cell::new(id), Cell::new(nbt_str)],
-            )
+            vec![Cell::new(count), Cell::new(id), Cell::new(nbt_str)]
         },
         Some(2),
     );
 }
 
-fn print_id_map(map: &HashMap<String, u64>, args: &CliArgs) {
+fn print_id_map(map: &HashMap<String, u64>) {
     let mut vec: Vec<_> = map.iter().map(|(id, &count)| (id.clone(), count)).collect();
     vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-    print_table_or_csv(
+    print_table(
         &["Count", "Item ID"],
         vec,
-        args,
-        |(id, count)| {
-            (
-                vec![count.to_string(), id.clone()],
-                vec![Cell::new(count), Cell::new(id)],
-            )
-        },
+        |(id, count)| vec![Cell::new(count), Cell::new(id)],
         None,
     );
 }
 
-fn print_nbt_counter(counter: &Counter, args: &CliArgs) {
+fn print_nbt_counter(counter: &Counter) {
     let mut by_nbt_vec: Vec<_> = counter.total_by_nbt().into_iter().collect();
     by_nbt_vec.sort_by(|(a_nbt, a_count), (b_nbt, b_count)| {
         b_count.cmp(a_count).then_with(|| a_nbt.cmp(b_nbt))
     });
 
-    print_table_or_csv(
+    print_table(
         &["Count", "NBT"],
         by_nbt_vec,
-        args,
         |(nbt_opt, count)| {
             let nbt_str = format_nbt_string(nbt_opt);
-            (
-                vec![count.to_string(), nbt_str.clone()],
-                vec![Cell::new(count), Cell::new(nbt_str)],
-            )
+            vec![Cell::new(count), Cell::new(nbt_str)]
         },
         Some(1),
     );
 }
 
-fn print_table_or_csv<T, F>(
+fn print_table<T, F>(
     headers: &[&str],
     data: Vec<T>,
-    args: &CliArgs,
     mut formatter: F,
     left_align_col: Option<usize>,
 ) where
-    F: FnMut(&T) -> (Vec<String>, Vec<Cell>),
+    F: FnMut(&T) -> Vec<Cell>,
 {
-    if args.csv {
-        let mut wtr = Writer::from_writer(std::io::stdout());
-        wtr.write_record(headers)
-            .expect("Failed to write CSV headers");
-        for item in data {
-            let (fields, _) = formatter(&item);
-            wtr.write_record(fields).expect("Failed to write CSV row");
-        }
-        wtr.flush().expect("Failed to flush CSV writer");
-    } else {
-        let mut table = Table::new();
-        table
-            .load_preset(presets::UTF8_FULL)
-            .set_content_arrangement(ContentArrangement::Dynamic)
-            .set_header(
-                headers
-                    .iter()
-                    .map(|&h| Cell::new(h).set_alignment(CellAlignment::Center)),
-            );
+    let mut table = Table::new();
+    table
+        .load_preset(presets::UTF8_FULL)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_header(
+            headers
+                .iter()
+                .map(|&h| Cell::new(h).set_alignment(CellAlignment::Center)),
+        );
 
-        if let Some(col_idx) = left_align_col
-            && let Some(col) = table.column_mut(col_idx)
-        {
-            col.set_cell_alignment(CellAlignment::Left);
-        }
-
-        for item in data {
-            let (_, cells) = formatter(&item);
-            table.add_row(cells);
-        }
-        println!("{table}");
+    if let Some(col_idx) = left_align_col
+        && let Some(col) = table.column_mut(col_idx)
+    {
+        col.set_cell_alignment(CellAlignment::Left);
     }
+
+    for item in data {
+        let cells = formatter(&item);
+        table.add_row(cells);
+    }
+    println!("{table}");
 }
 
 fn format_nbt_string(nbt_opt: &Option<String>) -> String {
@@ -631,7 +604,6 @@ mod tests {
             all: true,
             items: vec![],
             view: ViewMode::ById,
-            csv: false,
             show_nbt: false,
             per_source_summary: false,
             per_dimension_summary: false,
