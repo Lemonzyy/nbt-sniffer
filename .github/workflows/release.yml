@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: mc_nbt_scanner
+
+jobs:
+  build_and_release:
+    name: Build and Release for ${{ matrix.os_display }}
+    runs-on: ${{ matrix.os_runner }}
+    strategy:
+      matrix:
+        include:
+          - os_display: Linux
+            os_runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_suffix: linux-x86_64.tar.gz
+
+          - os_display: Windows
+            os_runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_suffix: windows-x86_64.zip
+
+          - os_display: macOS (Intel)
+            os_runner: macos-latest
+            target: x86_64-apple-darwin
+            asset_suffix: macos-x86_64.tar.gz
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo dependencies and target directory
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
+
+      - name: Set RUSTFLAGS for Windows
+        if: matrix.os_runner == 'windows-latest'
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
+
+      - name: Build binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Prepare package contents
+        id: prep
+        shell: bash
+        run: |
+          BINARY="${{ env.BINARY_NAME }}"
+          if [[ "${{ matrix.os_runner }}" == "windows-latest" ]]; then
+            BINARY="${BINARY}.exe"
+          fi
+
+          EXE_PATH="target/${{ matrix.target }}/release/${BINARY}"
+          STAGING="staging"
+          mkdir -p "$STAGING"
+          cp "$EXE_PATH" "$STAGING/"
+
+          FINAL_ASSET_NAME="${{ env.BINARY_NAME }}-${{ github.ref_name }}-${{ matrix.asset_suffix }}"
+          echo "asset=$FINAL_ASSET_NAME" >> $GITHUB_OUTPUT
+
+      - name: Create archive (Windows)
+        if: matrix.os_runner == 'windows-latest'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path staging\* -DestinationPath "${{ steps.prep.outputs.asset }}"
+
+      - name: Create archive (Unix)
+        if: matrix.os_runner != 'windows-latest'
+        shell: bash
+        run: |
+          tar -czvf "${{ steps.prep.outputs.asset }}" -C staging .
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ${{ steps.prep.outputs.asset }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

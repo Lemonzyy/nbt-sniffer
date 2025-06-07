@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    name: Build and Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy,rustfmt
+
+      - name: Cache dependencies & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-all-crates: true
+
+      - name: Install audit & udeps
+        run: |
+          cargo install --locked cargo-audit
+          cargo install --locked cargo-udeps
+
+      - name: Format & static checks
+        run: |
+          cargo fmt --all -- --check
+          cargo check --all --all-features
+          cargo clippy --all --all-features -- -D warnings
+
+      - name: Build & test
+        run: |
+          cargo build --all --all-features
+          cargo test --all --all-features -- --nocapture
+
+      - name: Dependency audit
+        run: cargo audit
+
+      - name: Unused deps check
+        run: cargo udeps --all-targets
