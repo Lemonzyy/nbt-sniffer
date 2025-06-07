@@ -185,6 +185,7 @@ pub fn process_entities_file(
 }
 
 /// Generic function to process NBT data from a chunk for a list of compounds.
+#[allow(clippy::too_many_arguments)] // TODO refactor
 fn process_chunk_nbt_list<F>(
     chunk_data: &mca::RawChunk,
     cy: usize,
