@@ -128,7 +128,7 @@ impl TreeItem for ItemSummaryNode {
         write!(f, "{self}")
     }
 
-    fn children(&self) -> std::borrow::Cow<[Self::Child]> {
+    fn children(&self) -> std::borrow::Cow<'_, [Self::Child]> {
         match self {
             ItemSummaryNode::Root { children, .. } => Cow::Borrowed(children),
             ItemSummaryNode::Item { children, .. } => Cow::Borrowed(children),

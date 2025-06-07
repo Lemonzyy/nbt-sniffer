@@ -137,14 +137,14 @@ mod tests {
         let key1 = ItemKey::new("minecraft:diamond".to_string(), None);
         assert_eq!(key1.id, "minecraft:diamond");
         assert!(key1.components_snbt.is_none());
-        assert_eq!(format!("{}", key1), "minecraft:diamond");
+        assert_eq!(format!("{key1}"), "minecraft:diamond");
 
         let nbt = nbt_val("{components:{\"minecraft:enchantments\":{\"minecraft:sharpness\":1s}}}");
         let key2 = ItemKey::new("minecraft:sword".to_string(), Some(&nbt));
         assert_eq!(key2.id, "minecraft:sword");
         assert!(key2.components_snbt.is_some());
         assert_eq!(
-            format!("{}", key2),
+            format!("{key2}"),
             "minecraft:sword {components:{\"minecraft:enchantments\":{\"minecraft:sharpness\":1s}}}"
         );
     }
