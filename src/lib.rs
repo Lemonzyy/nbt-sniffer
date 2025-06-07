@@ -1,36 +1,26 @@
 pub mod cli;
-pub mod conversion;
 pub mod counter;
+pub mod nbt_utils;
 pub mod tree;
 pub mod view;
 
 use std::{
+    collections::HashMap,
     fmt,
-    io::Cursor,
+    io::{Cursor, Read},
     path::{Path, PathBuf},
 };
 
 use cli::{CliArgs, ItemFilter};
-use conversion::convert_simdnbt_to_valence_nbt;
 use counter::{Counter, CounterMap};
+use flate2::read::GzDecoder;
 use mca::RegionReader;
+use nbt_utils::{convert_simdnbt_to_valence_nbt, get_entity_pos_string};
 use ptree::print_tree;
 use tree::ItemSummaryNode;
 use valence_nbt::Value;
 
 const CHUNK_PER_REGION_SIDE: usize = 32;
-
-const NBT_KEY_ID: &str = "id";
-const NBT_KEY_COUNT: &str = "count";
-const NBT_KEY_POS: &str = "Pos";
-const NBT_KEY_ITEMS: &str = "Items";
-const NBT_KEY_INVENTORY: &str = "Inventory";
-const NBT_KEY_ITEM: &str = "Item";
-const NBT_KEY_EQUIPMENT: &str = "equipment";
-const NBT_KEY_PASSENGERS: &str = "Passengers";
-const NBT_KEY_COMPONENTS: &str = "components";
-const NBT_KEY_MINECRAFT_CONTAINER: &str = "minecraft:container";
-const NBT_KEY_MINECRAFT_BUNDLE_CONTENTS: &str = "minecraft:bundle_contents";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Scope {
@@ -42,6 +32,7 @@ pub struct Scope {
 pub enum DataType {
     BlockEntity,
     Entity,
+    Player,
 }
 
 impl fmt::Display for DataType {
@@ -52,6 +43,7 @@ impl fmt::Display for DataType {
             match self {
                 DataType::BlockEntity => "Block Entity",
                 DataType::Entity => "Entity",
+                DataType::Player => "Player Data",
             }
         )
     }
@@ -87,11 +79,17 @@ pub fn list_mca_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(mca_files)
 }
 
-pub fn process_task(task: ScanTask, queries: &[ItemFilter], args: &CliArgs) -> CounterMap {
+pub fn process_task(
+    task: ScanTask,
+    queries: &[ItemFilter],
+    args: &CliArgs,
+    user_cache: &HashMap<String, String>,
+) -> CounterMap {
     let mut counter = Counter::new();
     match task.scope.data_type {
         DataType::BlockEntity => process_region_file(&task, queries, args, &mut counter),
         DataType::Entity => process_entities_file(&task, queries, args, &mut counter),
+        DataType::Player => process_player_file(&task, queries, args, &mut counter, user_cache),
     }
     let mut map = CounterMap::new();
     map.merge_scope(task.scope, &counter);
@@ -137,15 +135,7 @@ fn process_any_region_file<F>(
         for cx in 0..CHUNK_PER_REGION_SIDE {
             let chunk_data = match region_reader.get_chunk(cx, cy) {
                 Ok(Some(c)) => c,
-                Ok(None) => {
-                    if cli_args.verbose {
-                        eprintln!(
-                            "No chunk data at ({cx}, {cy}) in {}",
-                            region_file_path.display()
-                        );
-                    }
-                    continue;
-                }
+                Ok(None) => continue, // No chunk data
                 Err(e) => {
                     if cli_args.verbose {
                         eprintln!(
@@ -300,16 +290,229 @@ fn process_chunk_for_entities(
     );
 }
 
-/// Helper to get a formatted string for an entity's position.
-fn get_entity_pos_string(entity_nbt: &simdnbt::borrow::NbtCompound) -> String {
-    entity_nbt
-        .list(NBT_KEY_POS)
-        .and_then(|pos_list| pos_list.doubles())
-        .filter(|doubles| doubles.len() >= 3)
-        .map_or_else(
-            || "Unknown Position".to_string(),
-            |doubles| format!("{:.2} {:.2} {:.2}", doubles[0], doubles[1], doubles[2]),
+/// Processes a player data file (.dat or level.dat for the player section).
+fn process_player_file(
+    task: &ScanTask,
+    queries: &[ItemFilter],
+    cli_args: &CliArgs,
+    counter: &mut Counter,
+    user_cache: &HashMap<String, String>,
+) {
+    let file_path = &task.path;
+    let file_data = match std::fs::read(file_path) {
+        Ok(d) => d,
+        Err(e) => {
+            if cli_args.verbose {
+                eprintln!("Failed to read player file {}: {e}", file_path.display());
+            }
+            return;
+        }
+    };
+
+    let mut decompressor = GzDecoder::new(file_data.as_slice());
+    let mut decompressed_data = Vec::new();
+    if let Err(e) = decompressor.read_to_end(&mut decompressed_data) {
+        if cli_args.verbose {
+            eprintln!(
+                "Failed to decompress player file {}: {e}",
+                file_path.display(),
+            );
+        }
+        return;
+    }
+
+    let mut cursor = Cursor::new(decompressed_data.as_slice());
+    let nbt_root_container = match simdnbt::borrow::read(&mut cursor) {
+        Ok(nbt) => nbt,
+        Err(e) => {
+            if cli_args.verbose {
+                eprintln!(
+                    "Failed to read NBT for player file {}: {e}",
+                    file_path.display(),
+                );
+            }
+            return;
+        }
+    };
+
+    let nbt_root = match nbt_root_container {
+        simdnbt::borrow::Nbt::Some(nbt) => nbt,
+        simdnbt::borrow::Nbt::None => {
+            if cli_args.verbose {
+                eprintln!("No NBT data found in player file {}", file_path.display());
+            }
+            return;
+        }
+    };
+
+    let (player_nbt_compound_opt, source_id, base_location_str): (
+        Option<simdnbt::borrow::NbtCompound>,
+        String,
+        String,
+    ) = if file_path
+        .file_name()
+        .is_some_and(|name| name == "level.dat")
+    {
+        // Handle level.dat for single-player
+        nbt_root
+            .compound(nbt_utils::NBT_KEY_PLAYER_DATA)
+            .and_then(|data_compound| data_compound.compound(nbt_utils::NBT_KEY_PLAYER))
+            .map_or_else(
+                || {
+                    if cli_args.verbose {
+                        eprintln!(
+                            "Player data not found in level.dat: {}",
+                            file_path.display()
+                        );
+                    }
+                    (None, "".to_string(), "".to_string())
+                },
+                |player_data| {
+                    (
+                        Some(player_data),
+                        "Player (level.dat)".to_string(),
+                        "level.dat".to_string(),
+                    )
+                },
+            )
+    } else {
+        // Handle individual <uuid>.dat files
+        let player_uuid = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("UnknownPlayer")
+            .to_string();
+
+        // Attempt to get player name from user_cache
+        // player_uuid from file_stem is usually without hyphens.
+        // user_cache keys are stored as hyphenated lowercase UUIDs.
+        let display_name = uuid::Uuid::parse_str(&player_uuid)
+            .ok()
+            .and_then(|u| user_cache.get(&u.to_string())) // Uuid::to_string() is hyphenated lowercase
+            .map_or_else(
+                || player_uuid.clone(),
+                |name| format!("{name} ({player_uuid})"),
+            );
+
+        (
+            Some(nbt_root.as_compound()),
+            display_name,
+            file_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
         )
+    };
+
+    if let Some(player_nbt) = player_nbt_compound_opt {
+        let location_str = get_entity_pos_string(&player_nbt).unwrap_or(base_location_str); // Player NBT also has "Pos"
+
+        process_player_nbt_compound(
+            player_nbt,
+            task,
+            queries,
+            cli_args,
+            counter,
+            &source_id,
+            &location_str,
+        );
+    }
+}
+
+/// Extracts the single-player's UUID string from the level.dat file, if present.
+pub fn extract_single_player_uuid_from_level_dat(
+    level_dat_path: &Path,
+    cli_args: &CliArgs,
+) -> Option<String> {
+    if let Ok(file_data) = std::fs::read(level_dat_path) {
+        let mut decompressor = GzDecoder::new(file_data.as_slice());
+        let mut decompressed_data = Vec::new();
+        if decompressor.read_to_end(&mut decompressed_data).is_ok() {
+            let mut cursor = Cursor::new(decompressed_data.as_slice());
+            // We need to ensure nbt_root lives as long as player_compound if we don't copy
+            // Since get_uuid_from_player_nbt takes a reference, this is fine.
+            if let Ok(simdnbt::borrow::Nbt::Some(nbt_root)) = simdnbt::borrow::read(&mut cursor) {
+                if let Some(player_compound) = nbt_root
+                    .compound(nbt_utils::NBT_KEY_PLAYER_DATA)
+                    .and_then(|data_compound| data_compound.compound(nbt_utils::NBT_KEY_PLAYER))
+                {
+                    return nbt_utils::get_uuid_from_nbt(&player_compound);
+                } else if cli_args.verbose {
+                    eprintln!(
+                        "Player NBT compound (Data.Player) not found in {}.",
+                        level_dat_path.display()
+                    );
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Processes the NBT compound for a single player's data.
+fn process_player_nbt_compound(
+    player_nbt: simdnbt::borrow::NbtCompound,
+    task: &ScanTask,
+    item_queries: &[ItemFilter],
+    cli_args: &CliArgs,
+    counter: &mut Counter,
+    source_id: &str,
+    location_str: &str,
+) {
+    let mut summary_nodes = Vec::new();
+
+    if let Some(item_list) = player_nbt
+        .list(nbt_utils::NBT_KEY_INVENTORY)
+        .and_then(|l| l.compounds())
+    {
+        for item_compound in item_list {
+            collect_summary_node(
+                &item_compound,
+                cli_args,
+                item_queries,
+                &mut summary_nodes,
+                counter,
+            );
+        }
+    }
+
+    if let Some(item_list) = player_nbt
+        .list(nbt_utils::NBT_KEY_ENDER_ITEMS)
+        .and_then(|l| l.compounds())
+    {
+        for item_compound in item_list {
+            collect_summary_node(
+                &item_compound,
+                cli_args,
+                item_queries,
+                &mut summary_nodes,
+                counter,
+            );
+        }
+    }
+
+    if let Some(holder_compound) = player_nbt.compound(nbt_utils::NBT_KEY_EQUIPMENT) {
+        for (_key_in_holder, value_nbt) in holder_compound.iter() {
+            if let Some(actual_item_compound) = value_nbt.compound() {
+                collect_summary_node(
+                    &actual_item_compound,
+                    cli_args,
+                    item_queries,
+                    &mut summary_nodes,
+                    counter,
+                );
+            }
+        }
+    }
+
+    print_per_source_summary_if_enabled(
+        cli_args,
+        &task.scope.dimension,
+        source_id,
+        location_str,
+        summary_nodes,
+    );
 }
 
 /// Prints a per-source summary tree if the corresponding CLI flag is enabled.
@@ -339,14 +542,15 @@ fn process_single_entity(
     cli_args: &CliArgs,
     counter: &mut Counter,
 ) {
-    let Some(id_str) = entity_nbt.string(NBT_KEY_ID) else {
+    let Some(id_str) = entity_nbt.string(nbt_utils::NBT_KEY_ID) else {
         return;
     };
     let id = id_str.to_string();
-    let pos_str = get_entity_pos_string(&entity_nbt);
+    let pos_str =
+        get_entity_pos_string(&entity_nbt).unwrap_or_else(|| "Unknown Position".to_string());
 
     let mut summary_nodes = Vec::new();
-    for list_field_name in &[NBT_KEY_ITEMS, NBT_KEY_INVENTORY] {
+    for list_field_name in &[nbt_utils::NBT_KEY_ITEMS, nbt_utils::NBT_KEY_INVENTORY] {
         if let Some(item_list) = entity_nbt.list(list_field_name).and_then(|l| l.compounds()) {
             for item_compound in item_list {
                 collect_summary_node(
@@ -360,7 +564,7 @@ fn process_single_entity(
         }
     }
 
-    if let Some(item_compound) = entity_nbt.compound(NBT_KEY_ITEM) {
+    if let Some(item_compound) = entity_nbt.compound(nbt_utils::NBT_KEY_ITEM) {
         collect_summary_node(
             &item_compound,
             cli_args,
@@ -370,7 +574,7 @@ fn process_single_entity(
         );
     }
 
-    if let Some(holder_compound) = entity_nbt.compound(NBT_KEY_EQUIPMENT) {
+    if let Some(holder_compound) = entity_nbt.compound(nbt_utils::NBT_KEY_EQUIPMENT) {
         for (_key_in_holder, value_nbt) in holder_compound.iter() {
             if let Some(actual_item_compound) = value_nbt.compound() {
                 collect_summary_node(
@@ -385,7 +589,7 @@ fn process_single_entity(
     }
 
     if let Some(passengers_list) = entity_nbt
-        .list(NBT_KEY_PASSENGERS)
+        .list(nbt_utils::NBT_KEY_PASSENGERS)
         .and_then(|l| l.compounds())
     {
         for passenger_nbt in passengers_list {
@@ -413,19 +617,19 @@ fn process_block_entity(
     cli_args: &CliArgs,
     counter: &mut Counter,
 ) {
-    let id = block_entity.string(NBT_KEY_ID).unwrap().to_string();
+    let id = block_entity.string(nbt_utils::NBT_KEY_ID).unwrap().to_string();
     let x = block_entity.int("x").unwrap();
     let y = block_entity.int("y").unwrap();
     let z = block_entity.int("z").unwrap();
 
     let mut summary_nodes = Vec::new();
-    if let Some(items) = block_entity.list(NBT_KEY_ITEMS).and_then(|l| l.compounds()) {
+    if let Some(items) = block_entity.list(nbt_utils::NBT_KEY_ITEMS).and_then(|l| l.compounds()) {
         for item in items {
             collect_summary_node(&item, cli_args, item_queries, &mut summary_nodes, counter);
         }
     }
 
-    for single_item_field in &[NBT_KEY_ITEM, "RecordItem", "Book"] {
+    for single_item_field in &["item", "RecordItem", "Book"] {
         if let Some(item) = block_entity.compound(single_item_field) {
             collect_summary_node(&item, cli_args, item_queries, &mut summary_nodes, counter);
         }
@@ -450,32 +654,32 @@ fn collect_summary_node(
     out_nodes: &mut Vec<ItemSummaryNode>,
     global_counter: &mut Counter,
 ) {
-    let id = item_nbt.string(NBT_KEY_ID).unwrap().to_string();
-    let count = item_nbt.int(NBT_KEY_COUNT).unwrap_or(1) as u64;
+    let id = item_nbt.string(nbt_utils::NBT_KEY_ID).unwrap().to_string();
+    let count = item_nbt.int(nbt_utils::NBT_KEY_COUNT).unwrap_or(1) as u64;
 
     let matches_filter = if queries.is_empty() {
         true
     } else {
         let valence_nbt = convert_simdnbt_to_valence_nbt(item_nbt);
         queries.iter().any(|q| {
-            let id_ok = q.id.as_ref().map_or(true, |qid| qid == &id);
+            let id_ok = q.id.as_ref().is_none_or(|qid| qid == &id);
             let nbt_ok = q
                 .required_nbt
                 .as_ref()
-                .map_or(true, |req| nbt_is_subset(&valence_nbt, req));
+                .is_none_or(|req| nbt_is_subset(&valence_nbt, req));
             id_ok && nbt_ok
         })
     };
 
     let mut children = Vec::new();
 
-    if let Some(components) = item_nbt.compound(NBT_KEY_COMPONENTS) {
+    if let Some(components) = item_nbt.compound(nbt_utils::NBT_KEY_COMPONENTS) {
         if let Some(nested_list) = components
-            .list(NBT_KEY_MINECRAFT_CONTAINER)
+            .list(nbt_utils::NBT_KEY_MINECRAFT_CONTAINER)
             .and_then(|l| l.compounds())
         {
             for nested_entry in nested_list {
-                if let Some(nested_item) = nested_entry.compound(NBT_KEY_ITEM) {
+                if let Some(nested_item) = nested_entry.compound("item") {
                     collect_summary_node(
                         &nested_item,
                         cli_args,
@@ -488,7 +692,7 @@ fn collect_summary_node(
         }
 
         if let Some(nested_list) = components
-            .list(NBT_KEY_MINECRAFT_BUNDLE_CONTENTS)
+            .list(nbt_utils::NBT_KEY_MINECRAFT_BUNDLE_CONTENTS)
             .and_then(|l| l.compounds())
         {
             for nested_entry in nested_list {
@@ -505,7 +709,7 @@ fn collect_summary_node(
 
     if matches_filter {
         let nbt_components = item_nbt
-            .compound(NBT_KEY_COMPONENTS)
+            .compound(nbt_utils::NBT_KEY_COMPONENTS)
             .as_ref()
             .map(convert_simdnbt_to_valence_nbt);
 

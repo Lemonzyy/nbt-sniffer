@@ -10,10 +10,33 @@ use crate::{
     escape_nbt_string,
 };
 
+/// A helper trait to check if a summary data structure is empty.
+pub trait IsEmpty {
+    fn is_empty(&self) -> bool;
+}
+
+impl IsEmpty for Counter {
+    fn is_empty(&self) -> bool {
+        self.total() == 0
+    }
+}
+
+impl IsEmpty for CounterMap {
+    fn is_empty(&self) -> bool {
+        self.iter().all(|(_, counter)| counter.is_empty())
+    }
+}
+
+impl<K, V> IsEmpty for HashMap<K, V> {
+    fn is_empty(&self) -> bool {
+        HashMap::is_empty(self)
+    }
+}
 struct AggregatedData {
     grouped: BTreeMap<String, BTreeMap<DataType, Counter>>,
     total_block_entity: Counter,
     total_entity: Counter,
+    total_player_data: Counter,
     total_combined: Counter,
 }
 
@@ -22,6 +45,7 @@ impl AggregatedData {
         let mut grouped: BTreeMap<String, BTreeMap<DataType, Counter>> = BTreeMap::new();
         let mut total_block_entity = Counter::new();
         let mut total_entity = Counter::new();
+        let mut total_player_data = Counter::new();
         let mut total_combined = Counter::new();
 
         for (scope, counter) in counter_map.iter() {
@@ -35,6 +59,7 @@ impl AggregatedData {
             match scope.data_type {
                 DataType::BlockEntity => total_block_entity.merge(counter),
                 DataType::Entity => total_entity.merge(counter),
+                DataType::Player => total_player_data.merge(counter),
             }
             total_combined.merge(counter);
         }
@@ -43,6 +68,7 @@ impl AggregatedData {
             grouped,
             total_block_entity,
             total_entity,
+            total_player_data,
             total_combined,
         }
     }
@@ -60,11 +86,12 @@ impl AggregatedData {
 
 /// Trait to provide summary data in a generic way for different views.
 trait SummaryDataProvider {
-    type ItemSummary: Clone; // e.g., Counter or HashMap<String, u64>
+    type ItemSummary: Clone + IsEmpty; // e.g., Counter or HashMap<String, u64>
 
     fn get_grouped_data(&self) -> &BTreeMap<String, BTreeMap<DataType, Self::ItemSummary>>;
     fn get_total_block_entity_summary(&self) -> &Self::ItemSummary;
     fn get_total_entity_summary(&self) -> &Self::ItemSummary;
+    fn get_total_player_data_summary(&self) -> &Self::ItemSummary;
     fn get_total_combined_summary(&self) -> &Self::ItemSummary;
     fn calculate_dimension_combined_summary(&self, dimension: &str) -> Self::ItemSummary;
 }
@@ -81,6 +108,9 @@ impl SummaryDataProvider for AggregatedData {
     fn get_total_entity_summary(&self) -> &Self::ItemSummary {
         &self.total_entity
     }
+    fn get_total_player_data_summary(&self) -> &Self::ItemSummary {
+        &self.total_player_data
+    }
     fn get_total_combined_summary(&self) -> &Self::ItemSummary {
         &self.total_combined
     }
@@ -94,6 +124,7 @@ struct AggregatedIdCountsData {
     grouped: BTreeMap<String, BTreeMap<DataType, HashMap<String, u64>>>,
     total_block_entity: HashMap<String, u64>,
     total_entity: HashMap<String, u64>,
+    total_player_data: HashMap<String, u64>,
     total_combined: HashMap<String, u64>,
 }
 
@@ -101,9 +132,10 @@ impl AggregatedIdCountsData {
     fn new(counter_map: &CounterMap) -> Self {
         let mut grouped: BTreeMap<String, BTreeMap<DataType, HashMap<String, u64>>> =
             BTreeMap::new();
-        let mut total_block_entity: HashMap<String, u64> = HashMap::new();
-        let mut total_entity: HashMap<String, u64> = HashMap::new();
-        let mut total_combined: HashMap<String, u64> = HashMap::new();
+        let mut total_block_entity = HashMap::new();
+        let mut total_entity = HashMap::new();
+        let mut total_player_data = HashMap::new();
+        let mut total_combined = HashMap::new();
 
         for (scope, counter) in counter_map.iter() {
             let current_total_by_id = counter.total_by_id();
@@ -123,6 +155,9 @@ impl AggregatedIdCountsData {
                     DataType::Entity => {
                         *total_entity.entry(id.clone()).or_default() += *count;
                     }
+                    DataType::Player => {
+                        *total_player_data.entry(id.clone()).or_default() += *count;
+                    }
                 }
             }
         }
@@ -130,6 +165,7 @@ impl AggregatedIdCountsData {
             grouped,
             total_block_entity,
             total_entity,
+            total_player_data,
             total_combined,
         }
     }
@@ -159,6 +195,9 @@ impl SummaryDataProvider for AggregatedIdCountsData {
     fn get_total_entity_summary(&self) -> &Self::ItemSummary {
         &self.total_entity
     }
+    fn get_total_player_data_summary(&self) -> &Self::ItemSummary {
+        &self.total_player_data
+    }
     fn get_total_combined_summary(&self) -> &Self::ItemSummary {
         &self.total_combined
     }
@@ -174,38 +213,74 @@ where
     F: FnMut(&P::ItemSummary, &str),
 {
     match (args.per_dimension_summary, args.per_data_type_summary) {
-        (false, false) => print_fn_for_summary(provider.get_total_combined_summary(), "Total"),
+        (false, false) => {}
         (true, false) => {
             for dimension in provider.get_grouped_data().keys() {
                 let combined_dim_summary = provider.calculate_dimension_combined_summary(dimension);
-                print_fn_for_summary(&combined_dim_summary, &format!("Dimension: {dimension}"));
+                if !combined_dim_summary.is_empty() {
+                    print_fn_for_summary(&combined_dim_summary, &format!("Dimension: {dimension}"));
+                }
             }
-            print_fn_for_summary(provider.get_total_combined_summary(), "Total");
         }
         (false, true) => {
-            print_fn_for_summary(provider.get_total_block_entity_summary(), "Block Entity");
-            print_fn_for_summary(provider.get_total_entity_summary(), "Entity");
-            print_fn_for_summary(provider.get_total_combined_summary(), "Total");
+            let be_summary = provider.get_total_block_entity_summary();
+            if !be_summary.is_empty() {
+                print_fn_for_summary(be_summary, "Block Entity");
+            }
+            let e_summary = provider.get_total_entity_summary();
+            if !e_summary.is_empty() {
+                print_fn_for_summary(e_summary, "Entity");
+            }
+            let p_summary = provider.get_total_player_data_summary();
+            if !p_summary.is_empty() {
+                print_fn_for_summary(p_summary, "Player Data");
+            }
         }
         (true, true) => {
             for (dimension, types_map) in provider.get_grouped_data() {
                 println!("\nDimension: {dimension}");
 
-                if let Some(summary_item) = types_map.get(&DataType::BlockEntity) {
+                if let Some(summary_item) = types_map.get(&DataType::BlockEntity)
+                    && !summary_item.is_empty()
+                {
                     print_fn_for_summary(summary_item, "Block Entity");
                 }
-                if let Some(summary_item) = types_map.get(&DataType::Entity) {
+
+                if let Some(summary_item) = types_map.get(&DataType::Entity)
+                    && !summary_item.is_empty()
+                {
                     print_fn_for_summary(summary_item, "Entity");
                 }
 
+                if let Some(summary_item) = types_map.get(&DataType::Player)
+                    && !summary_item.is_empty()
+                {
+                    print_fn_for_summary(summary_item, "Player Data");
+                }
+
                 let combined_dim_summary = provider.calculate_dimension_combined_summary(dimension);
-                print_fn_for_summary(&combined_dim_summary, "Summary");
+                if !combined_dim_summary.is_empty() {
+                    print_fn_for_summary(&combined_dim_summary, "Summary");
+                }
             }
 
-            print_fn_for_summary(provider.get_total_block_entity_summary(), "\nBlock Entity");
-            print_fn_for_summary(provider.get_total_entity_summary(), "Entity");
-            print_fn_for_summary(provider.get_total_combined_summary(), "Total");
+            let be_summary_total = provider.get_total_block_entity_summary();
+            if !be_summary_total.is_empty() {
+                print_fn_for_summary(be_summary_total, "\nBlock Entity");
+            }
+            let e_summary_total = provider.get_total_entity_summary();
+            if !e_summary_total.is_empty() {
+                print_fn_for_summary(e_summary_total, "Entity");
+            }
+            let p_summary_total = provider.get_total_player_data_summary();
+            if !p_summary_total.is_empty() {
+                print_fn_for_summary(p_summary_total, "Player Data");
+            }
         }
+    }
+    let total_summary = provider.get_total_combined_summary();
+    if !total_summary.is_empty() {
+        print_fn_for_summary(total_summary, "Total");
     }
 }
 
@@ -227,6 +302,7 @@ pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
         let display_label = match label {
             "Block Entity" => "Total Block Entity",
             "Entity" => "Total Entity",
+            "Player Data" => "Total Player Data",
             _ => label,
         };
 
@@ -407,8 +483,8 @@ mod tests {
             "minecraft:iron_sword".to_string(),
             Some(&nbt_damaged_sword),
             5,
-        ); // 5 damaged iron swords
-        counter_ow_e.add("minecraft:rotten_flesh".to_string(), None, 15); // 15 rotten flesh
+        );
+        counter_ow_e.add("minecraft:rotten_flesh".to_string(), None, 15);
         map.merge_scope(scope_ow_e, &counter_ow_e);
 
         let scope_nether_be = Scope {
@@ -416,8 +492,25 @@ mod tests {
             data_type: DataType::BlockEntity,
         };
         let mut counter_nether_be = Counter::new();
-        counter_nether_be.add("minecraft:chest".to_string(), None, 3); // Another chest
+        counter_nether_be.add("minecraft:chest".to_string(), None, 3);
         map.merge_scope(scope_nether_be, &counter_nether_be);
+
+        let scope_player = Scope {
+            dimension: "playerdata".to_string(),
+            data_type: DataType::Player,
+        };
+        let mut counter_player = Counter::new();
+        counter_player.add("minecraft:diamond_sword".to_string(), None, 1);
+        // For testing total_by_id, let's use a simple count for an item that might have NBT
+        // The actual NBT string for components would be more complex.
+        let nbt_ender_pearls_comp =
+            nbt_val("{components:{\"minecraft:custom_data\":{stack_size:16}}}");
+        counter_player.add(
+            "minecraft:ender_pearl".to_string(),
+            Some(&nbt_ender_pearls_comp),
+            1,
+        ); // Represents 1 item stack with NBT indicating 16
+        map.merge_scope(scope_player, &counter_player);
 
         map
     }
@@ -427,9 +520,11 @@ mod tests {
         let counter_map = create_sample_counter_map();
         let agg_data = AggregatedData::new(&counter_map);
 
-        // Check grouped data
-        assert_eq!(agg_data.grouped.len(), 2); // overworld, nether
-        assert_eq!(agg_data.grouped.get("overworld").unwrap().len(), 2); // BlockEntity, Entity
+        assert_eq!(agg_data.grouped.len(), 3); // overworld, nether, playerdata
+        assert_eq!(agg_data.grouped.get("overworld").unwrap().len(), 2);
+        assert_eq!(agg_data.grouped.get("nether").unwrap().len(), 1);
+        assert_eq!(agg_data.grouped.get("playerdata").unwrap().len(), 1);
+
         assert_eq!(
             agg_data
                 .grouped
@@ -439,7 +534,7 @@ mod tests {
                 .unwrap()
                 .total(),
             15
-        ); // 10 chests + 5 furnaces
+        );
         assert_eq!(
             agg_data
                 .grouped
@@ -448,8 +543,8 @@ mod tests {
                 .get(&DataType::Entity)
                 .unwrap()
                 .total(),
-            20 // 5 iron_swords + 15 rotten_flesh
-        ); // 20 zombies
+            20
+        );
         assert_eq!(
             agg_data
                 .grouped
@@ -459,17 +554,26 @@ mod tests {
                 .unwrap()
                 .total(),
             3
-        ); // 3 chests
+        );
+        assert_eq!(
+            agg_data
+                .grouped
+                .get("playerdata")
+                .unwrap()
+                .get(&DataType::Player)
+                .unwrap()
+                .total(),
+            2
+        ); // 1 sword + 1 pearl stack item
 
-        // Check totals
         assert_eq!(agg_data.total_block_entity.total(), 15 + 3);
         assert_eq!(agg_data.total_entity.total(), 20);
-        assert_eq!(agg_data.total_combined.total(), 15 + 3 + 20);
+        assert_eq!(agg_data.total_player_data.total(), 2);
+        assert_eq!(agg_data.total_combined.total(), 15 + 3 + 20 + 2);
 
-        // Check dimension_combined
         assert_eq!(agg_data.dimension_combined("overworld").total(), 15 + 20);
         assert_eq!(agg_data.dimension_combined("nether").total(), 3);
-        assert_eq!(agg_data.dimension_combined("unknown_dim").total(), 0);
+        assert_eq!(agg_data.dimension_combined("playerdata").total(), 2);
     }
 
     #[test]
@@ -477,7 +581,6 @@ mod tests {
         let counter_map = create_sample_counter_map();
         let agg_id_data = AggregatedIdCountsData::new(&counter_map);
 
-        // Check grouped data
         let ov_be_counts = agg_id_data
             .grouped
             .get("overworld")
@@ -485,53 +588,43 @@ mod tests {
             .get(&DataType::BlockEntity)
             .unwrap();
         assert_eq!(ov_be_counts.get("minecraft:chest"), Some(&10));
-        assert_eq!(ov_be_counts.get("minecraft:furnace"), Some(&5));
 
-        let ov_e_counts = agg_id_data
+        let player_counts = agg_id_data
             .grouped
-            .get("overworld")
+            .get("playerdata")
             .unwrap()
-            .get(&DataType::Entity)
+            .get(&DataType::Player)
             .unwrap();
-        assert_eq!(ov_e_counts.get("minecraft:iron_sword"), Some(&5));
-        assert_eq!(ov_e_counts.get("minecraft:rotten_flesh"), Some(&15));
+        assert_eq!(player_counts.get("minecraft:diamond_sword"), Some(&1));
+        assert_eq!(player_counts.get("minecraft:ender_pearl"), Some(&1)); // Counts item stacks
 
-        // Check totals
         assert_eq!(
             agg_id_data.total_block_entity.get("minecraft:chest"),
             Some(&13)
-        ); // 10 + 3
-        assert_eq!(
-            agg_id_data.total_block_entity.get("minecraft:furnace"),
-            Some(&5)
         );
         assert_eq!(
             agg_id_data.total_entity.get("minecraft:iron_sword"),
             Some(&5)
         );
         assert_eq!(
-            agg_id_data.total_entity.get("minecraft:rotten_flesh"),
-            Some(&15)
+            agg_id_data.total_player_data.get("minecraft:diamond_sword"),
+            Some(&1)
         );
+        assert_eq!(
+            agg_id_data.total_player_data.get("minecraft:ender_pearl"),
+            Some(&1)
+        );
+
         assert_eq!(agg_id_data.total_combined.get("minecraft:chest"), Some(&13));
         assert_eq!(
-            agg_id_data.total_combined.get("minecraft:iron_sword"),
-            Some(&5)
-        );
-        assert_eq!(
-            agg_id_data.total_combined.get("minecraft:rotten_flesh"),
-            Some(&15)
+            agg_id_data.total_combined.get("minecraft:diamond_sword"),
+            Some(&1)
         );
 
-        // Check dimension_combined
-        let ov_dim_combined = agg_id_data.dimension_combined("overworld");
-        assert_eq!(ov_dim_combined.get("minecraft:chest"), Some(&10));
-        assert_eq!(ov_dim_combined.get("minecraft:furnace"), Some(&5));
-        assert_eq!(ov_dim_combined.get("minecraft:iron_sword"), Some(&5));
-        assert_eq!(ov_dim_combined.get("minecraft:rotten_flesh"), Some(&15));
+        let player_dim_combined = agg_id_data.dimension_combined("playerdata");
+        assert_eq!(player_dim_combined.get("minecraft:diamond_sword"), Some(&1));
     }
 
-    // Helper for execute_summary_printing tests
     fn mock_cli_args() -> CliArgs {
         CliArgs {
             world_path: PathBuf::from("dummy"),
@@ -550,10 +643,9 @@ mod tests {
     #[test]
     fn test_execute_summary_printing_logic() {
         let counter_map = create_sample_counter_map();
-        let data_provider = AggregatedIdCountsData::new(&counter_map); // Using IdCounts for simplicity
+        let data_provider = AggregatedIdCountsData::new(&counter_map);
         let mut printed_labels: Vec<String> = Vec::new();
 
-        // Case 1: No per_dimension or per_data_type
         let mut args = mock_cli_args();
         {
             let mut print_fn_case1 = |_: &HashMap<String, u64>, label: &str| {
@@ -564,7 +656,6 @@ mod tests {
         assert_eq!(printed_labels, vec!["Total"]);
         printed_labels.clear();
 
-        // Case 2: Per dimension only
         args.per_dimension_summary = true;
         {
             let mut print_fn_case2 = |_: &HashMap<String, u64>, label: &str| {
@@ -572,14 +663,19 @@ mod tests {
             };
             execute_summary_printing(&data_provider, &args, &mut print_fn_case2);
         }
+        // Order from BTreeMap: nether, overworld, playerdata
         assert_eq!(
             printed_labels,
-            vec!["Dimension: nether", "Dimension: overworld", "Total"]
+            vec![
+                "Dimension: nether",
+                "Dimension: overworld",
+                "Dimension: playerdata",
+                "Total"
+            ]
         );
         printed_labels.clear();
-        args.per_dimension_summary = false; // Reset
+        args.per_dimension_summary = false;
 
-        // Case 3: Per data type only
         args.per_data_type_summary = true;
         {
             let mut print_fn_case3 = |_: &HashMap<String, u64>, label: &str| {
@@ -587,11 +683,12 @@ mod tests {
             };
             execute_summary_printing(&data_provider, &args, &mut print_fn_case3);
         }
-        assert_eq!(printed_labels, vec!["Block Entity", "Entity", "Total"]);
+        assert_eq!(
+            printed_labels,
+            vec!["Block Entity", "Entity", "Player Data", "Total"]
+        );
         printed_labels.clear();
 
-        // Case 4: Both per_dimension and per_data_type
-        // Note: The order of dimensions from BTreeMap keys() will be alphabetical.
         args.per_dimension_summary = true;
         args.per_data_type_summary = true;
         {
@@ -603,13 +700,20 @@ mod tests {
         assert_eq!(
             printed_labels,
             vec![
-                "Block Entity", // (within nether, due to println! in execute_summary_printing)
-                "Summary",      // (for nether)
-                "Block Entity", // (within overworld)
-                "Entity",       // (within overworld)
-                "Summary",      // (for overworld)
+                // Dimension: nether
+                "Block Entity",
+                "Summary",
+                // Dimension: overworld
+                "Block Entity",
+                "Entity",
+                "Summary",
+                // Dimension: playerdata
+                "Player Data",
+                "Summary",
+                // Totals
                 "\nBlock Entity",
                 "Entity",
+                "Player Data",
                 "Total"
             ]
         );

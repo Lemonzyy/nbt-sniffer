@@ -1,6 +1,21 @@
 use simdnbt::borrow::{NbtCompound, NbtList};
 use valence_nbt::{Compound, List, Value};
 
+pub const NBT_KEY_ID: &str = "id";
+pub const NBT_KEY_COUNT: &str = "count";
+pub const NBT_KEY_POS: &str = "Pos";
+pub const NBT_KEY_ITEMS: &str = "Items";
+pub const NBT_KEY_INVENTORY: &str = "Inventory";
+pub const NBT_KEY_ITEM: &str = "Item";
+pub const NBT_KEY_EQUIPMENT: &str = "equipment";
+pub const NBT_KEY_PASSENGERS: &str = "Passengers";
+pub const NBT_KEY_COMPONENTS: &str = "components";
+pub const NBT_KEY_MINECRAFT_CONTAINER: &str = "minecraft:container";
+pub const NBT_KEY_MINECRAFT_BUNDLE_CONTENTS: &str = "minecraft:bundle_contents";
+pub const NBT_KEY_ENDER_ITEMS: &str = "EnderItems";
+pub const NBT_KEY_PLAYER_DATA: &str = "Data"; // For level.dat
+pub const NBT_KEY_PLAYER: &str = "Player"; // For level.dat, nested under "Data"
+
 pub fn convert_simdnbt_to_valence_nbt(compound: &NbtCompound) -> Value {
     let mut valence_compound = Compound::new();
 
@@ -98,4 +113,31 @@ pub fn convert_list(list: &NbtList) -> List {
     }
 
     valence_list
+}
+
+/// Extracts a UUID string from an NBT compound.
+/// It checks for an Int Array named `UUID` (e.g. `[I;-132296786,2112623056,-1486552928,-920753162]`), which is the standard for modern Minecraft versions.
+pub fn get_uuid_from_nbt(nbt_compound: &NbtCompound) -> Option<String> {
+    // Standard Int Array "UUID" (common in entity NBT and player NBT in modern versions)
+    if let Some(uuid_int_array) = nbt_compound.int_array("UUID")
+        && uuid_int_array.len() == 4
+    {
+        let most_significant_long =
+            ((uuid_int_array[0] as u64) << 32) | (uuid_int_array[1] as u64 & 0xFFFFFFFF);
+        let least_significant_long =
+            ((uuid_int_array[2] as u64) << 32) | (uuid_int_array[3] as u64 & 0xFFFFFFFF);
+        let uuid_val = uuid::Uuid::from_u64_pair(most_significant_long, least_significant_long);
+        return Some(uuid_val.to_string());
+    }
+
+    None
+}
+
+/// Helper to get a formatted string for an entity's position.
+pub fn get_entity_pos_string(entity_nbt: &simdnbt::borrow::NbtCompound) -> Option<String> {
+    entity_nbt
+        .list(NBT_KEY_POS)
+        .and_then(|pos_list| pos_list.doubles())
+        .filter(|doubles| doubles.len() >= 3)
+        .map(|doubles| format!("{:.2} {:.2} {:.2}", doubles[0], doubles[1], doubles[2]))
 }
