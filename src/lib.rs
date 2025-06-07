@@ -617,13 +617,19 @@ fn process_block_entity(
     cli_args: &CliArgs,
     counter: &mut Counter,
 ) {
-    let id = block_entity.string(nbt_utils::NBT_KEY_ID).unwrap().to_string();
+    let id = block_entity
+        .string(nbt_utils::NBT_KEY_ID)
+        .unwrap()
+        .to_string();
     let x = block_entity.int("x").unwrap();
     let y = block_entity.int("y").unwrap();
     let z = block_entity.int("z").unwrap();
 
     let mut summary_nodes = Vec::new();
-    if let Some(items) = block_entity.list(nbt_utils::NBT_KEY_ITEMS).and_then(|l| l.compounds()) {
+    if let Some(items) = block_entity
+        .list(nbt_utils::NBT_KEY_ITEMS)
+        .and_then(|l| l.compounds())
+    {
         for item in items {
             collect_summary_node(&item, cli_args, item_queries, &mut summary_nodes, counter);
         }
