@@ -25,8 +25,8 @@
 ## Usage
 
 ```bash
-nbt-sniffer <WORLD_PATH> --item <ITEM_ID[{NBT_DATA}]> [OPTIONS]
-nbt-sniffer <WORLD_PATH> --all [OPTIONS]
+nbt-sniffer --world-path <WORLD_PATH> --item <ITEM_ID[{NBT_DATA}]> [OPTIONS]
+nbt-sniffer --world-path <WORLD_PATH> --all [OPTIONS]
 ```
 
 ### Key Options:
@@ -46,20 +46,20 @@ nbt-sniffer <WORLD_PATH> --all [OPTIONS]
 1.  **Count all diamonds in your world:**
 
     ```bash
-    nbt-sniffer /path/to/your/world --item minecraft:diamond
+    nbt-sniffer --world-path /path/to/your/world --item minecraft:diamond
     ```
 
 2.  **Find all netherite swords specifically named "My Awesome Sword":**
 
     ```bash
-    nbt-sniffer /path/to/your/world --item 'minecraft:netherite_sword{components:{"minecraft:custom_name":"\"My Awesome Sword\""}}'
+    nbt-sniffer --world-path /path/to/your/world --item 'minecraft:netherite_sword{components:{"minecraft:custom_name":"My Awesome Sword"}}'
     ```
 
     _Note: SNBT often requires careful quoting, especially for custom names represented as JSON strings within NBT._
 
 3.  **Find all enchanted books with the Mending enchantment:**
     ```bash
-    nbt-sniffer /path/to/your/world --item 'minecraft:enchanted_book{components:{"minecraft:stored_enchantments":{"minecraft:mending":1}}}'
+    nbt-sniffer --world-path /path/to/your/world --item 'minecraft:enchanted_book{components:{"minecraft:stored_enchantments":{"minecraft:mending":1}}}'
     ```
 
 ---
