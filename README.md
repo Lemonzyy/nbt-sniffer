@@ -9,13 +9,13 @@
 </div>
 <br/>
 
-`nbt-sniffer` is a command-line tool designed to scan Minecraft Java Edition world data. It helps you locate and count items, with powerful support for NBT filtering, making it easier to find exactly what you're looking for within your world saves and player data files.
+`nbt-sniffer` is a command-line tool that sniffs through Minecraft Java Edition[^version_note] world data. It locates and counts items across your world and player files, with powerful NBT-based filters so you can sniff out exactly what you want.
 
 ## Features
 
 - Scans items in block entities and regular entities from `.mca` files.
 - Scans player data from `.dat` files (including `level.dat` for single-player worlds).
-- Filters items by ID and/or NBT data (SNBT format).
+- Filters items by ID and/or NBT data (SNBT[^snbt] format).
 - Multiple views: `detailed` (ID+NBT), `by-id`, `by-nbt`.
 - Optional summaries: per-dimension, per-data-type, per-source (tree view).
 - Output formats: Formatted tables (JSON output planned for the future).
@@ -55,7 +55,7 @@ nbt-sniffer <WORLD_PATH> --all [OPTIONS]
     nbt-sniffer /path/to/your/world --item 'minecraft:netherite_sword{components:{"minecraft:custom_name":"\"My Awesome Sword\""}}'
     ```
 
-    _Note: SNBT strings often require careful quoting, especially for custom names represented as JSON strings within NBT._
+    _Note: SNBT often requires careful quoting, especially for custom names represented as JSON strings within NBT._
 
 3.  **Find all enchanted books with the Mending enchantment:**
     ```bash
@@ -69,7 +69,8 @@ Happy sniffing!
 ---
 
 <div align="center">
-  <small><em>Minecraft is a trademark of Mojang Synergies AB. The Sniffer mob image/GIF is property of Mojang Synergies AB.</em></small>
-  <br/>
-  <small><em>This tool is primarily tested and intended for Minecraft Java Edition 1.21.5 due to potential NBT format changes in item data across versions. Functionality with other versions is not guaranteed.</em></small>
+  <small><em>Minecraft is a trademark of Mojang Synergies AB. The Sniffer mob image/GIF is property of Mojang Synergies AB. This project is not affiliated with or endorsed by Mojang Synergies AB.</em></small>
 </div>
+
+[^version_note]: This tool is primarily tested and intended for recent versions of Minecraft Java Edition, specifically focusing on 1.21.5 due to potential NBT format changes in item data across different game versions. Functionality with other versions is not guaranteed.
+[^snbt]: Stringified NBT format
