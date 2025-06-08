@@ -7,7 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: mc_nbt_scanner
+  BINARY_NAME: nbt-sniffer
 
 jobs:
   build_and_release:

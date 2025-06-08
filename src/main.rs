@@ -1,5 +1,5 @@
 use clap::Parser;
-use mc_nbt_scanner::{
+use nbt_sniffer::{
     DataType, ScanTask, Scope,
     cli::{CliArgs, ViewMode, parse_item_args},
     counter::CounterMap,

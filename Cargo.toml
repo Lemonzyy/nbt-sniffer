@@ -1,5 +1,5 @@
 [package]
-name = "mc_nbt_scanner"
+name = "nbt-sniffer"
 version = "0.1.0"
 edition = "2024"
 

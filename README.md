@@ -1,50 +1,75 @@
-# Minecraft NBT Scanner (mc_nbt_scanner)
+<div align="center">
 
-`mc_nbt_scanner` is a command-line tool to scan Minecraft Java Edition world data and count items, with support for NBT filtering.
+  <h1>NBT Sniffer</h1>
+
+  <img src="https://raw.githubusercontent.com/Lemonzyy/nbt-sniffer/refs/heads/main/assets/sniffer_sniffing.gif" alt="NBT Sniffer Logo - A Minecraft Sniffer sniffing" width="80%">
+  <br/>
+
+  <p><em>Ever wondered what treasures lie hidden in your Minecraft world's NBT data? Let NBT Sniffer help you unearth them!</em></p>
+</div>
+<br/>
+
+`nbt-sniffer` is a command-line tool designed to scan Minecraft Java Edition world data. It helps you locate and count items, with powerful support for NBT filtering, making it easier to find exactly what you're looking for within your world saves and player data files.
 
 ## Features
 
 - Scans items in block entities and regular entities from `.mca` files.
+- Scans player data from `.dat` files (including `level.dat` for single-player worlds).
 - Filters items by ID and/or NBT data (SNBT format).
 - Multiple views: `detailed` (ID+NBT), `by-id`, `by-nbt`.
 - Optional summaries: per-dimension, per-data-type, per-source (tree view).
-- Output formats: Formatted tables (or in the future: JSON).
-- Parallel processing for speed.
+- Output formats: Formatted tables (JSON output planned for the future).
+- Parallel processing for efficient scanning of large worlds.
+- User-friendly player UUID to name resolution using `usercache.json`.
 
 ## Usage
 
 ```bash
-mc_nbt_scanner <WORLD_PATH> --item <ITEM_ID[{NBT_DATA}]> [OPTIONS]
-mc_nbt_scanner <WORLD_PATH> --all [OPTIONS]
+nbt-sniffer <WORLD_PATH> --item <ITEM_ID[{NBT_DATA}]> [OPTIONS]
+nbt-sniffer <WORLD_PATH> --all [OPTIONS]
 ```
 
 ### Key Options:
 
 - `<WORLD_PATH>`: (Required) Path to the Minecraft world directory.
-- `--all`: Count all items.
-- `--item <ITEM_ID[{NBT_DATA}]>`: Specify item(s) to count (e.g., `minecraft:diamond`, `stone{a:1b}`).
-- `--view <MODE>`: `by-id` (default), `by-nbt`, `detailed`.
-- `--show-nbt`: Show full NBT in detailed view.
-- `--per-source-summary`: Tree summary for items per source.
-- `--per-dimension-summary`: Summary per dimension.
-- `--per-data-type-summary`: Summary per data type (Block Entity, Entity).
-- `-v, --verbose`: Verbose output.
+- `--all`: Scan for all items.
+- `--item <ITEM_ID[{NBT_DATA}]>`: Specify item(s) to scan for (e.g., `minecraft:diamond`, `'minecraft:stone{components:{"minecraft:custom_data":{some_tag:1b}}}'`).
+- `--view <MODE>`: Set the output view. Options: `by-id` (default), `by-nbt`, `detailed`.
+- `--show-nbt`: When `--per-source-summary` is active, this flag includes the NBT data for each item within the generated tree view. It does not affect other views.
+- `--per-source-summary`: Display a tree summary showing where items are found.
+- `--per-dimension-summary`: Display a summary of items found per dimension.
+- `--per-data-type-summary`: Display a summary of items per data type (Block Entity, Entity, Player).
+- `-v, --verbose`: Enable verbose output for more detailed logging.
 
 ### Examples
 
-1.  **Count all diamonds:**
+1.  **Count all diamonds in your world:**
 
     ```bash
-    mc_nbt_scanner /path/to/your/world --item minecraft:diamond
+    nbt-sniffer /path/to/your/world --item minecraft:diamond
     ```
 
-2.  **Find all netherite swords specifically named "My Sword":**
+2.  **Find all netherite swords specifically named "My Awesome Sword":**
 
     ```bash
-    mc_nbt_scanner /path/to/your/world --item 'minecraft:netherite_sword{components:{"minecraft:custom_name":"My Sword"}}'
+    nbt-sniffer /path/to/your/world --item 'minecraft:netherite_sword{components:{"minecraft:custom_name":"\"My Awesome Sword\""}}'
     ```
 
-3.  **Find all enchanted books with Mending:**
+    _Note: SNBT strings often require careful quoting, especially for custom names represented as JSON strings within NBT._
+
+3.  **Find all enchanted books with the Mending enchantment:**
     ```bash
-    mc_nbt_scanner /path/to/your/world --item 'minecraft:enchanted_book{components:{"minecraft:stored_enchantments":{"minecraft:mending":1}}}'
+    nbt-sniffer /path/to/your/world --item 'minecraft:enchanted_book{components:{"minecraft:stored_enchantments":{"minecraft:mending":1}}}'
     ```
+
+---
+
+Happy sniffing!
+
+---
+
+<div align="center">
+  <small><em>Minecraft is a trademark of Mojang Synergies AB. The Sniffer mob image/GIF is property of Mojang Synergies AB.</em></small>
+  <br/>
+  <small><em>This tool is primarily tested and intended for Minecraft Java Edition 1.21.5 due to potential NBT format changes in item data across versions. Functionality with other versions is not guaranteed.</em></small>
+</div>
