@@ -5,7 +5,18 @@ edition = "2024"
 description = "A command-line tool designed to scan Minecraft Java Edition world data."
 license = "MIT"
 repository = "https://github.com/Lemonzyy/nbt-sniffer"
-categories = ["cli", "nbt", "minecraft"]
+keywords = [
+    "minecraft",
+    "nbt",
+    "scanner",
+    "world",
+    "cli",
+    "java-edition",
+    "region",
+    "mca",
+    "item-finder",
+]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
