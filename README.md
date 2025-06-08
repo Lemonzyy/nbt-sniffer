@@ -2,7 +2,7 @@
 
   <h1>NBT Sniffer</h1>
 
-  <img src="https://raw.githubusercontent.com/Lemonzyy/nbt-sniffer/refs/heads/main/assets/sniffer_sniffing.gif" alt="NBT Sniffer Logo - A Minecraft Sniffer sniffing" width="80%">
+  <img src="https://raw.githubusercontent.com/Lemonzyy/nbt-sniffer/refs/heads/main/assets/sniffer_sniffing.gif" alt="NBT Sniffer Logo - A Minecraft Sniffer sniffing" width="20%">
   <br/>
 
   <p><em>Ever wondered what treasures lie hidden in your Minecraft world's NBT data? Let NBT Sniffer help you unearth them!</em></p>
