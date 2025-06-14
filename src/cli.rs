@@ -55,7 +55,7 @@ pub struct CliArgs {
 }
 
 /// Which summary‐format to display.
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug, ValueEnum, PartialEq, Eq)]
 pub enum ViewMode {
     /// List every distinct (ID, NBT) combination
     Detailed,

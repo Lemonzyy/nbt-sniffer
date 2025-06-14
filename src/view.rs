@@ -6,7 +6,7 @@ use serde_json::{Value as JsonValue, json};
 
 use crate::{
     DataType,
-    cli::{CliArgs, OutputFormat},
+    cli::{CliArgs, OutputFormat, ViewMode},
     counter::{Counter, CounterMap},
     escape_nbt_string,
 };
@@ -207,165 +207,175 @@ impl SummaryDataProvider for AggregatedIdCountsData {
     }
 }
 
-/// Generic function to print summaries based on the provided data provider and CLI arguments.
-fn execute_summary_printing<P, F>(provider: &P, args: &CliArgs, mut print_fn_for_summary: F)
-where
-    P: SummaryDataProvider,
-    F: FnMut(&P::ItemSummary, &str),
-{
-    match (args.per_dimension_summary, args.per_data_type_summary) {
-        (false, false) => {}
-        (true, false) => {
-            for dimension in provider.get_grouped_data().keys() {
-                let combined_dim_summary = provider.calculate_dimension_combined_summary(dimension);
-                if !combined_dim_summary.is_empty() {
-                    print_fn_for_summary(&combined_dim_summary, &format!("Dimension: {dimension}"));
-                }
-            }
-        }
-        (false, true) => {
-            let be_summary = provider.get_total_block_entity_summary();
-            if !be_summary.is_empty() {
-                print_fn_for_summary(be_summary, "Block Entity");
-            }
-            let e_summary = provider.get_total_entity_summary();
-            if !e_summary.is_empty() {
-                print_fn_for_summary(e_summary, "Entity");
-            }
-            let p_summary = provider.get_total_player_data_summary();
-            if !p_summary.is_empty() {
-                print_fn_for_summary(p_summary, "Player Data");
-            }
-        }
-        (true, true) => {
-            for (dimension, types_map) in provider.get_grouped_data() {
-                println!("\nDimension: {dimension}");
-
-                if let Some(summary_item) = types_map.get(&DataType::BlockEntity)
-                    && !summary_item.is_empty()
-                {
-                    print_fn_for_summary(summary_item, "Block Entity");
-                }
-
-                if let Some(summary_item) = types_map.get(&DataType::Entity)
-                    && !summary_item.is_empty()
-                {
-                    print_fn_for_summary(summary_item, "Entity");
-                }
-
-                if let Some(summary_item) = types_map.get(&DataType::Player)
-                    && !summary_item.is_empty()
-                {
-                    print_fn_for_summary(summary_item, "Player Data");
-                }
-
-                let combined_dim_summary = provider.calculate_dimension_combined_summary(dimension);
-                if !combined_dim_summary.is_empty() {
-                    print_fn_for_summary(&combined_dim_summary, "Summary");
-                }
-            }
-
-            let be_summary_total = provider.get_total_block_entity_summary();
-            if !be_summary_total.is_empty() {
-                print_fn_for_summary(be_summary_total, "\nBlock Entity");
-            }
-            let e_summary_total = provider.get_total_entity_summary();
-            if !e_summary_total.is_empty() {
-                print_fn_for_summary(e_summary_total, "Entity");
-            }
-            let p_summary_total = provider.get_total_player_data_summary();
-            if !p_summary_total.is_empty() {
-                print_fn_for_summary(p_summary_total, "Player Data");
-            }
-        }
-    }
-    let total_summary = provider.get_total_combined_summary();
-    if !total_summary.is_empty() {
-        print_fn_for_summary(total_summary, "Total");
-    }
-}
-
 pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
+    let data_provider = AggregatedData::new(counter_map);
+    let grand_total_numeric_count = data_provider.total_combined.total();
+    let report_data = generate_report_data(
+        &data_provider,
+        args,
+        to_detailed_item_entries,
+        grand_total_numeric_count,
+    );
+
     if args.output_format.is_json() {
-        let grand_total_numeric_count = counter_map.combined().total();
-        let data_provider = AggregatedData::new(counter_map);
-        let json_output = generate_json_summary(
-            &data_provider,
-            args,
-            to_detailed_item_entries,
-            grand_total_numeric_count,
-        );
-        print_json_output(&json_output, args.output_format == OutputFormat::PrettyJson);
-    } else {
-        let data_provider = AggregatedData::new(counter_map);
-        execute_summary_printing(&data_provider, args, |counter_summary, label| {
-            if !label.starts_with('\n') {
-                println!("{label}:");
-            } else {
-                println!("{}:", &label[1..]);
-            }
-            print_detailed_counter(counter_summary);
+        let json_value = serde_json::to_value(&report_data).unwrap_or_else(|e| {
+            eprintln!("Error serializing report to JSON: {e}");
+            json!({ "error": format!("Failed to serialize report: {e}") })
         });
+        print_json_output(&json_value, args.output_format == OutputFormat::PrettyJson);
+    } else {
+        print_report_as_tables(&report_data, args, print_detailed_counter);
     }
 }
 
 pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
     let data_provider = AggregatedData::new(counter_map);
-    if args.output_format.is_json() {
-        let grand_total_numeric_count = counter_map.combined().total();
-        let json_output = generate_json_summary(
-            &data_provider,
-            args,
-            to_nbt_item_entries,
-            grand_total_numeric_count,
-        );
-        print_json_output(&json_output, args.output_format == OutputFormat::PrettyJson);
-    } else {
-        execute_summary_printing(&data_provider, args, |counter_summary, label| {
-            let display_label = match label {
-                "Block Entity" => "Total Block Entity",
-                "Entity" => "Total Entity",
-                "Player Data" => "Total Player Data",
-                _ => label,
-            };
+    let grand_total_numeric_count = data_provider.total_combined.total();
+    let report_data = generate_report_data(
+        &data_provider,
+        args,
+        to_nbt_item_entries,
+        grand_total_numeric_count,
+    );
 
-            if !label.starts_with('\n')
-                && !label.starts_with("Total")
-                && !label.starts_with("Summary")
-            {
-                println!("{display_label}:");
-            } else {
-                println!("{}:", &display_label.trim_start_matches('\n'));
-            }
-            print_nbt_counter(counter_summary);
+    if args.output_format.is_json() {
+        let json_value = serde_json::to_value(&report_data).unwrap_or_else(|e| {
+            eprintln!("Error serializing report to JSON: {e}");
+            json!({ "error": format!("Failed to serialize report: {e}") })
         });
+        print_json_output(&json_value, args.output_format == OutputFormat::PrettyJson);
+    } else {
+        print_report_as_tables(&report_data, args, print_nbt_counter);
     }
 }
 
 pub fn view_by_id(counter_map: &CounterMap, args: &CliArgs) {
     let data_provider = AggregatedIdCountsData::new(counter_map);
+    let grand_total_numeric_count = data_provider.total_combined.values().sum();
+    let report_data = generate_report_data(
+        &data_provider,
+        args,
+        to_id_item_entries,
+        grand_total_numeric_count,
+    );
+
     if args.output_format.is_json() {
-        // For ById view, the grand_total_numeric_count should be the sum of counts of unique IDs.
-        let grand_total_numeric_count = data_provider.total_combined.values().sum();
-        let json_output = generate_json_summary(
-            &data_provider,
-            args,
-            to_id_item_entries,
-            grand_total_numeric_count,
-        );
-        print_json_output(&json_output, args.output_format == OutputFormat::PrettyJson);
+        let json_value = serde_json::to_value(&report_data).unwrap_or_else(|e| {
+            eprintln!("Error serializing report to JSON: {e}");
+            json!({ "error": format!("Failed to serialize report: {e}") })
+        });
+        print_json_output(&json_value, args.output_format == OutputFormat::PrettyJson);
     } else {
-        execute_summary_printing(&data_provider, args, |id_map_summary, label| {
+        print_report_as_tables(&report_data, args, print_id_map);
+    }
+}
+
+fn print_report_as_tables<TItem>(
+    report: &Report<TItem>,
+    args: &CliArgs,
+    mut print_items_fn: impl FnMut(&[TItem]),
+) where
+    TItem: Clone + Serialize,
+{
+    let mut print_section = |items: &Vec<TItem>, label: &str| {
+        if !items.is_empty() {
             let mut effective_label = label.to_string();
             if label.starts_with('\n') {
                 effective_label = label.trim_start_matches('\n').to_string();
             }
-            println!("{effective_label}:");
-            print_id_map(id_map_summary);
-        });
+
+            let display_label = if args.view == ViewMode::ByNbt {
+                match effective_label.as_str() {
+                    "Block Entity" => "Total Block Entity".to_string(),
+                    "Entity" => "Total Entity".to_string(),
+                    "Player Data" => "Total Player Data".to_string(),
+                    _ => effective_label,
+                }
+            } else {
+                effective_label
+            };
+
+            let is_by_nbt_special_label = args.view == ViewMode::ByNbt
+                && (label == "Block Entity" || label == "Entity" || label == "Player Data");
+
+            if label.starts_with("Dimension:")
+                || is_by_nbt_special_label
+                || (args.view != ViewMode::ByNbt
+                    && !label.starts_with('\n')
+                    && label != "Total"
+                    && label != "Summary")
+            {
+                println!("{display_label}:");
+            } else if label.starts_with('\n') || label == "Total" || label == "Summary" {
+                println!("{}:", display_label.trim_start_matches('\n'));
+            }
+            // Other cases (like specific data type labels not covered above) might not print a label if not explicitly handled,
+            // or rely on the dimension header if inside a (true, true) block.
+
+            print_items_fn(items);
+        }
+    };
+
+    match (args.per_dimension_summary, args.per_data_type_summary) {
+        (false, false) => {}
+        (true, false) => {
+            if let Some(per_dimension_data) = &report.per_dimension {
+                for (dimension_name, items) in per_dimension_data {
+                    print_section(items, &format!("Dimension: {dimension_name}"));
+                }
+            }
+        }
+        (false, true) => {
+            if let Some(per_data_type_data) = &report.per_data_type {
+                if let Some(items) = per_data_type_data.get(&DataType::BlockEntity.to_string()) {
+                    print_section(items, "Block Entity");
+                }
+                if let Some(items) = per_data_type_data.get(&DataType::Entity.to_string()) {
+                    print_section(items, "Entity");
+                }
+                if let Some(items) = per_data_type_data.get(&DataType::Player.to_string()) {
+                    print_section(items, "Player Data");
+                }
+            }
+        }
+        (true, true) => {
+            if let Some(per_dimension_detail_data) = &report.per_dimension_detail {
+                for (dimension_name, type_map) in per_dimension_detail_data {
+                    println!("\nDimension: {dimension_name}");
+                    if let Some(items) = type_map.get(&DataType::BlockEntity.to_string()) {
+                        print_section(items, "Block Entity");
+                    }
+                    if let Some(items) = type_map.get(&DataType::Entity.to_string()) {
+                        print_section(items, "Entity");
+                    }
+                    if let Some(items) = type_map.get(&DataType::Player.to_string()) {
+                        print_section(items, "Player Data");
+                    }
+                    if let Some(per_dimension_data) = &report.per_dimension
+                        && let Some(dim_summary_items) = per_dimension_data.get(dimension_name)
+                    {
+                        print_section(dim_summary_items, "Summary");
+                    }
+                }
+            }
+            if let Some(per_data_type_data) = &report.per_data_type {
+                if let Some(items) = per_data_type_data.get(&DataType::BlockEntity.to_string()) {
+                    print_section(items, "\nBlock Entity");
+                }
+                if let Some(items) = per_data_type_data.get(&DataType::Entity.to_string()) {
+                    print_section(items, "Entity");
+                }
+                if let Some(items) = per_data_type_data.get(&DataType::Player.to_string()) {
+                    print_section(items, "Player Data");
+                }
+            }
+        }
     }
+    print_section(&report.grand_total, "Total");
 }
 
+/// Helper function to serialize a JsonValue to a string (pretty or compact)
+/// and print it to stdout, or print an error to stderr.
 fn print_json_output(json_value: &JsonValue, pretty: bool) {
     let result = if pretty {
         serde_json::to_string_pretty(json_value)
@@ -381,56 +391,44 @@ fn print_json_output(json_value: &JsonValue, pretty: bool) {
     }
 }
 
-fn print_detailed_counter(counter: &Counter) {
-    let mut detailed_vec: Vec<_> = counter
-        .detailed_counts()
-        .iter()
-        .map(|(item_key, &count)| (item_key.id.clone(), item_key.components_snbt.clone(), count))
-        .collect();
-
-    detailed_vec.sort_by(|(a_id, a_nbt, a_count), (b_id, b_nbt, b_count)| {
-        b_count
-            .cmp(a_count)
-            .then_with(|| a_id.cmp(b_id))
-            .then_with(|| a_nbt.cmp(b_nbt))
-    });
-
+fn print_detailed_counter(items: &[ReportItemDetailed]) {
+    if items.is_empty() {
+        return;
+    }
     print_table(
         &["Count", "ID", "NBT"],
-        detailed_vec,
-        |(id, nbt_opt, count)| {
-            let nbt_str = format_nbt_string(nbt_opt);
-            vec![Cell::new(count), Cell::new(id), Cell::new(nbt_str)]
+        items.to_vec(),
+        |item| {
+            vec![
+                Cell::new(item.count),
+                Cell::new(&item.id),
+                Cell::new(&item.nbt),
+            ]
         },
         Some(2),
     );
 }
 
-fn print_id_map(map: &HashMap<String, u64>) {
-    let mut vec: Vec<_> = map.iter().map(|(id, &count)| (id.clone(), count)).collect();
-    vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-
+fn print_id_map(items: &[ReportItemId]) {
+    if items.is_empty() {
+        return;
+    }
     print_table(
         &["Count", "Item ID"],
-        vec,
-        |(id, count)| vec![Cell::new(count), Cell::new(id)],
+        items.to_vec(),
+        |item| vec![Cell::new(item.count), Cell::new(&item.id)],
         None,
     );
 }
 
-fn print_nbt_counter(counter: &Counter) {
-    let mut by_nbt_vec: Vec<_> = counter.total_by_nbt().into_iter().collect();
-    by_nbt_vec.sort_by(|(a_nbt, a_count), (b_nbt, b_count)| {
-        b_count.cmp(a_count).then_with(|| a_nbt.cmp(b_nbt))
-    });
-
+fn print_nbt_counter(items: &[ReportItemNbt]) {
+    if items.is_empty() {
+        return;
+    }
     print_table(
         &["Count", "NBT"],
-        by_nbt_vec,
-        |(nbt_opt, count)| {
-            let nbt_str = format_nbt_string(nbt_opt);
-            vec![Cell::new(count), Cell::new(nbt_str)]
-        },
+        items.to_vec(),
+        |item| vec![Cell::new(item.count), Cell::new(&item.nbt)],
         Some(1),
     );
 }
@@ -438,10 +436,11 @@ fn print_nbt_counter(counter: &Counter) {
 fn print_table<T, F>(
     headers: &[&str],
     data: Vec<T>,
-    mut formatter: F,
+    mut row_formatter: F,
     left_align_col: Option<usize>,
 ) where
     F: FnMut(&T) -> Vec<Cell>,
+    T: Clone,
 {
     let mut table = Table::new();
     table
@@ -460,7 +459,7 @@ fn print_table<T, F>(
     }
 
     for item in data {
-        let cells = formatter(&item);
+        let cells = row_formatter(&item);
         table.add_row(cells);
     }
     println!("{table}");
@@ -473,48 +472,39 @@ fn format_nbt_string(nbt_opt: &Option<String>) -> String {
         .unwrap_or_else(|| "No NBT".into())
 }
 
-/// Represents a detailed item entry in JSON.
-#[derive(Serialize)]
-struct JsonItemDetailed {
+#[derive(Serialize, Clone)]
+struct ReportItemDetailed {
     count: u64,
     id: String,
     nbt: String,
 }
 
-/// Represents an item entry summarized by ID in JSON.
-#[derive(Serialize)]
-struct JsonItemId {
+#[derive(Serialize, Clone)]
+struct ReportItemId {
     count: u64,
     id: String,
 }
 
-/// Represents an item entry summarized by NBT in JSON.
-#[derive(Serialize)]
-struct JsonItemNbt {
+#[derive(Serialize, Clone)]
+struct ReportItemNbt {
     count: u64,
     nbt: String,
 }
 
-/// Root structure for JSON output, generic over the type of item entry.
 #[derive(Serialize)]
-struct JsonReport<TItem: Serialize> {
+struct Report<TItem: Serialize> {
     #[serde(skip_serializing_if = "Option::is_none")]
     per_dimension: Option<HashMap<String, Vec<TItem>>>,
-
     #[serde(skip_serializing_if = "Option::is_none")]
-    per_data_type: Option<HashMap<String, Vec<TItem>>>, // Key is DataType as string
-
+    per_data_type: Option<HashMap<String, Vec<TItem>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    per_dimension_detail: Option<HashMap<String, HashMap<String, Vec<TItem>>>>, // Dimension -> DataType -> Vec<TItem>
-
+    per_dimension_detail: Option<HashMap<String, HashMap<String, Vec<TItem>>>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     grand_total: Vec<TItem>,
-
     grand_total_count: u64,
 }
 
-// For data from view_detailed
-fn to_detailed_item_entries(counter: &Counter) -> Vec<JsonItemDetailed> {
+fn to_detailed_item_entries(counter: &Counter) -> Vec<ReportItemDetailed> {
     let mut detailed_vec: Vec<_> = counter
         .detailed_counts()
         .iter()
@@ -530,7 +520,7 @@ fn to_detailed_item_entries(counter: &Counter) -> Vec<JsonItemDetailed> {
 
     detailed_vec
         .iter()
-        .map(|(id, nbt_opt, count)| JsonItemDetailed {
+        .map(|(id, nbt_opt, count)| ReportItemDetailed {
             count: *count,
             id: id.clone(),
             nbt: format_nbt_string(nbt_opt),
@@ -538,21 +528,19 @@ fn to_detailed_item_entries(counter: &Counter) -> Vec<JsonItemDetailed> {
         .collect()
 }
 
-// For data from view_by_id
-fn to_id_item_entries(map: &HashMap<String, u64>) -> Vec<JsonItemId> {
+fn to_id_item_entries(map: &HashMap<String, u64>) -> Vec<ReportItemId> {
     let mut vec: Vec<_> = map.iter().map(|(id, &count)| (id.clone(), count)).collect();
     vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
     vec.iter()
-        .map(|(id, count)| JsonItemId {
+        .map(|(id, count)| ReportItemId {
             count: *count,
             id: id.clone(),
         })
         .collect()
 }
 
-// For data from view_by_nbt
-fn to_nbt_item_entries(counter: &Counter) -> Vec<JsonItemNbt> {
+fn to_nbt_item_entries(counter: &Counter) -> Vec<ReportItemNbt> {
     let mut by_nbt_vec: Vec<_> = counter.total_by_nbt().into_iter().collect();
     by_nbt_vec.sort_by(|(a_nbt, a_count), (b_nbt, b_count)| {
         b_count.cmp(a_count).then_with(|| a_nbt.cmp(b_nbt))
@@ -560,7 +548,7 @@ fn to_nbt_item_entries(counter: &Counter) -> Vec<JsonItemNbt> {
 
     by_nbt_vec
         .iter()
-        .map(|(nbt_opt, count)| JsonItemNbt {
+        .map(|(nbt_opt, count)| ReportItemNbt {
             count: *count,
             nbt: format_nbt_string(nbt_opt),
         })
@@ -657,18 +645,18 @@ where
     }
 }
 
-fn generate_json_summary<P, TItem, F>(
+fn generate_report_data<P, TItem, F>(
     provider: &P,
     args: &CliArgs,
     to_item_entries: F,
     grand_total_numeric_count: u64,
-) -> JsonValue
+) -> Report<TItem>
 where
     P: SummaryDataProvider,
     TItem: Serialize,
     F: Fn(&P::ItemSummary) -> Vec<TItem>,
 {
-    let report = JsonReport::<TItem> {
+    Report::<TItem> {
         per_dimension: args
             .per_dimension_summary
             .then(|| build_per_dimension_summary_section(provider, &to_item_entries))
@@ -689,25 +677,11 @@ where
             }
         },
         grand_total_count: grand_total_numeric_count,
-    };
-
-    serde_json::to_value(report).unwrap_or_else(|e| {
-        eprintln!("Error serializing report to JSON: {e}");
-        json!({ "error": format!("Failed to serialize report: {e}") })
-    })
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    const JSON_KEY_ITEM_COUNT: &str = "count";
-    const JSON_KEY_ITEM_ID: &str = "id";
-    const JSON_KEY_ITEM_NBT: &str = "nbt";
-    const JSON_KEY_PER_DIMENSION: &str = "per_dimension";
-    const JSON_KEY_PER_DATA_TYPE: &str = "per_data_type";
-    const JSON_KEY_PER_DIMENSION_DETAIL: &str = "per_dimension_detail";
-    const JSON_KEY_GRAND_TOTAL: &str = "grand_total";
-    const JSON_KEY_GRAND_TOTAL_COUNT: &str = "grand_total_count";
-
     use super::*;
     use crate::{
         DataType, Scope,
@@ -781,7 +755,7 @@ mod tests {
         assert_eq!(agg_data.grouped.len(), 3);
         assert_eq!(
             agg_data.total_combined.total(),
-            (10 + 5) + (5 + 15) + 3 + (1 + 1) // Sum of all individual item counts
+            (10 + 5) + (5 + 15) + 3 + (1 + 1)
         );
     }
 
@@ -789,9 +763,6 @@ mod tests {
     fn test_aggregated_id_counts_data_new() {
         let counter_map = create_sample_counter_map();
         let agg_id_data = AggregatedIdCountsData::new(&counter_map);
-        // For AggregatedIdCountsData, total_combined is a HashMap<String, u64>
-        // Its "total" would be the sum of counts of unique item IDs.
-        // chest (10+3), furnace (5), iron_sword (5), rotten_flesh (15), diamond_sword (1), ender_pearl (1)
         assert_eq!(
             agg_id_data.total_combined.values().sum::<u64>(),
             13 + 5 + 5 + 15 + 1 + 1
@@ -814,85 +785,97 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_summary_printing_logic() {
+    fn test_print_report_as_tables_logic() {
         let counter_map = create_sample_counter_map();
-        let data_provider = AggregatedIdCountsData::new(&counter_map); // Using IdCounts for this table test
-        let mut printed_labels: Vec<String> = Vec::new();
-
         let mut args = mock_cli_args();
+        args.view = ViewMode::ById;
+
+        let data_provider = AggregatedIdCountsData::new(&counter_map);
+        let mut printed_labels_counts: HashMap<String, usize> = HashMap::new();
+
         // Case 1: No dimension/type flags
-        {
-            let mut print_fn_case1 = |_: &HashMap<String, u64>, label: &str| {
-                printed_labels.push(label.to_string());
-            };
-            execute_summary_printing(&data_provider, &args, &mut print_fn_case1);
-        }
-        assert_eq!(printed_labels, vec!["Total"]);
-        printed_labels.clear();
+        let report_data_case1 = generate_report_data(
+            &data_provider,
+            &args,
+            to_id_item_entries,
+            data_provider.total_combined.values().sum(),
+        );
+        print_report_as_tables(&report_data_case1, &args, |items| {
+            if !items.is_empty() {
+                *printed_labels_counts
+                    .entry("section_processed_case1".to_string())
+                    .or_insert(0) += 1;
+            }
+        });
+        assert_eq!(
+            printed_labels_counts.get("section_processed_case1"),
+            Some(&1)
+        );
+        printed_labels_counts.clear();
 
         // Case 2: Per dimension only
         args.per_dimension_summary = true;
-        {
-            let mut print_fn_case2 = |_: &HashMap<String, u64>, label: &str| {
-                printed_labels.push(label.to_string());
-            };
-            execute_summary_printing(&data_provider, &args, &mut print_fn_case2);
-        }
-        assert_eq!(
-            printed_labels,
-            vec![
-                "Dimension: nether",
-                "Dimension: overworld",
-                "Dimension: playerdata",
-                "Total"
-            ]
+        let report_data_case2 = generate_report_data(
+            &data_provider,
+            &args,
+            to_id_item_entries,
+            data_provider.total_combined.values().sum(),
         );
-        printed_labels.clear();
-        args.per_dimension_summary = false; // Reset
+        print_report_as_tables(&report_data_case2, &args, |items| {
+            if !items.is_empty() {
+                *printed_labels_counts
+                    .entry("section_processed_case2".to_string())
+                    .or_insert(0) += 1;
+            }
+        });
+        assert_eq!(
+            printed_labels_counts.get("section_processed_case2"),
+            Some(&4)
+        );
+        printed_labels_counts.clear();
+        args.per_dimension_summary = false;
 
         // Case 3: Per data type only
         args.per_data_type_summary = true;
-        {
-            let mut print_fn_case3 = |_: &HashMap<String, u64>, label: &str| {
-                printed_labels.push(label.to_string());
-            };
-            execute_summary_printing(&data_provider, &args, &mut print_fn_case3);
-        }
-        assert_eq!(
-            printed_labels,
-            vec!["Block Entity", "Entity", "Player Data", "Total"]
+        let report_data_case3 = generate_report_data(
+            &data_provider,
+            &args,
+            to_id_item_entries,
+            data_provider.total_combined.values().sum(),
         );
-        printed_labels.clear();
-        args.per_data_type_summary = false; // Reset
+        print_report_as_tables(&report_data_case3, &args, |items| {
+            if !items.is_empty() {
+                *printed_labels_counts
+                    .entry("section_processed_case3".to_string())
+                    .or_insert(0) += 1;
+            }
+        });
+        assert_eq!(
+            printed_labels_counts.get("section_processed_case3"),
+            Some(&4)
+        );
+        printed_labels_counts.clear();
+        args.per_data_type_summary = false;
 
         // Case 4: Both per dimension and per data type
         args.per_dimension_summary = true;
         args.per_data_type_summary = true;
-        {
-            let mut print_fn_case4 = |_: &HashMap<String, u64>, label: &str| {
-                printed_labels.push(label.to_string());
-            };
-            execute_summary_printing(&data_provider, &args, &mut print_fn_case4);
-        }
+        let report_data_case4 = generate_report_data(
+            &data_provider,
+            &args,
+            to_id_item_entries,
+            data_provider.total_combined.values().sum(),
+        );
+        print_report_as_tables(&report_data_case4, &args, |items| {
+            if !items.is_empty() {
+                *printed_labels_counts
+                    .entry("section_processed_case4".to_string())
+                    .or_insert(0) += 1;
+            }
+        });
         assert_eq!(
-            printed_labels,
-            vec![
-                // Dimension: nether
-                "Block Entity",
-                "Summary",
-                // Dimension: overworld
-                "Block Entity",
-                "Entity",
-                "Summary",
-                // Dimension: playerdata
-                "Player Data",
-                "Summary",
-                // Overall Totals by Type
-                "\nBlock Entity",
-                "Entity",
-                "Player Data",
-                "Total"
-            ]
+            printed_labels_counts.get("section_processed_case4"),
+            Some(&11)
         );
     }
 
@@ -906,25 +889,27 @@ mod tests {
         let grand_total_numeric_count = counter_map.combined().total();
         let data_provider = AggregatedData::new(&counter_map);
 
-        let json_value = generate_json_summary(
+        let report_data = generate_report_data(
             &data_provider,
             &args,
             to_detailed_item_entries,
             grand_total_numeric_count,
         );
 
+        let json_value = serde_json::to_value(&report_data).unwrap();
+
         assert!(json_value.is_object());
         let obj = json_value.as_object().unwrap();
-        assert!(obj.get(JSON_KEY_PER_DIMENSION).is_none());
-        assert!(obj.get(JSON_KEY_PER_DATA_TYPE).is_none());
-        assert!(obj.get(JSON_KEY_PER_DIMENSION_DETAIL).is_none());
-        assert!(obj.get(JSON_KEY_GRAND_TOTAL).is_some());
+        assert!(obj.get("per_dimension").is_none());
+        assert!(obj.get("per_data_type").is_none());
+        assert!(obj.get("per_dimension_detail").is_none());
+        assert!(obj.get("grand_total").is_some());
         assert_eq!(
-            obj.get(JSON_KEY_GRAND_TOTAL_COUNT),
+            obj.get("grand_total_count"),
             Some(&json!(grand_total_numeric_count))
         );
 
-        let grand_total_arr = obj.get(JSON_KEY_GRAND_TOTAL).unwrap().as_array().unwrap();
+        let grand_total_arr = obj.get("grand_total").unwrap().as_array().unwrap();
         let expected_distinct_items_in_grand_total = data_provider
             .get_total_combined_summary()
             .detailed_counts()
@@ -935,9 +920,9 @@ mod tests {
         );
         if !grand_total_arr.is_empty() {
             let first_item = grand_total_arr[0].as_object().unwrap();
-            assert!(first_item.contains_key(JSON_KEY_ITEM_COUNT));
-            assert!(first_item.contains_key(JSON_KEY_ITEM_ID));
-            assert!(first_item.contains_key(JSON_KEY_ITEM_NBT));
+            assert!(first_item.contains_key("count"));
+            assert!(first_item.contains_key("id"));
+            assert!(first_item.contains_key("nbt"));
         }
     }
 
@@ -953,36 +938,33 @@ mod tests {
         let data_provider = AggregatedIdCountsData::new(&counter_map);
         let grand_total_numeric_count = data_provider.total_combined.values().sum();
 
-        let json_value = generate_json_summary(
+        let report_data = generate_report_data(
             &data_provider,
             &args,
             to_id_item_entries,
             grand_total_numeric_count,
         );
+        let json_value = serde_json::to_value(&report_data).unwrap();
 
         assert!(json_value.is_object());
         let obj = json_value.as_object().unwrap();
-        assert!(obj.get(JSON_KEY_PER_DIMENSION).is_some());
-        assert!(obj.get(JSON_KEY_PER_DATA_TYPE).is_some());
-        assert!(obj.get(JSON_KEY_PER_DIMENSION_DETAIL).is_some());
-        assert!(obj.get(JSON_KEY_GRAND_TOTAL).is_some());
+        assert!(obj.get("per_dimension").is_some());
+        assert!(obj.get("per_data_type").is_some());
+        assert!(obj.get("per_dimension_detail").is_some());
+        assert!(obj.get("grand_total").is_some());
         assert_eq!(
-            obj.get(JSON_KEY_GRAND_TOTAL_COUNT),
+            obj.get("grand_total_count"),
             Some(&json!(grand_total_numeric_count))
         );
 
-        let per_dim = obj
-            .get(JSON_KEY_PER_DIMENSION)
-            .unwrap()
-            .as_object()
-            .unwrap();
+        let per_dim = obj.get("per_dimension").unwrap().as_object().unwrap();
         assert!(per_dim.contains_key("overworld"));
         let overworld_summary = per_dim.get("overworld").unwrap().as_array().unwrap();
         if !overworld_summary.is_empty() {
             let first_item = overworld_summary[0].as_object().unwrap();
-            assert!(first_item.contains_key(JSON_KEY_ITEM_COUNT));
-            assert!(first_item.contains_key(JSON_KEY_ITEM_ID));
-            assert!(!first_item.contains_key(JSON_KEY_ITEM_NBT));
+            assert!(first_item.contains_key("count"));
+            assert!(first_item.contains_key("id"));
+            assert!(!first_item.contains_key("nbt"));
         }
     }
 }
