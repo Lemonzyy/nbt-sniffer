@@ -1,4 +1,3 @@
-// Declare the submodules
 pub mod aggregation;
 pub mod builder;
 pub mod item_conversion;
@@ -6,13 +5,14 @@ pub mod json_printer;
 pub mod structures;
 pub mod table_printer;
 
+use std::collections::HashMap;
+
 use crate::{
     cli::{CliArgs, OutputFormat},
-    counter::CounterMap,
+    counter::{Counter, CounterMap},
 };
+use aggregation::{AggregationResult, IsEmpty};
 use serde_json::json;
-
-use aggregation::{AggregatedData, AggregatedIdCountsData, IsEmpty};
 
 use builder::generate_report_data;
 use item_conversion::{to_detailed_item_entries, to_id_item_entries, to_nbt_item_entries};
@@ -22,7 +22,7 @@ use table_printer::{
 };
 
 pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
-    let data_provider = AggregatedData::new(counter_map);
+    let data_provider = AggregationResult::<Counter>::new(counter_map);
     let grand_total_numeric_count = data_provider.total_combined.total();
     let report_data = generate_report_data(
         &data_provider,
@@ -43,7 +43,7 @@ pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
 }
 
 pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
-    let data_provider = AggregatedData::new(counter_map);
+    let data_provider = AggregationResult::<Counter>::new(counter_map);
     let grand_total_numeric_count = data_provider.total_combined.total();
     let report_data = generate_report_data(
         &data_provider,
@@ -64,7 +64,7 @@ pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
 }
 
 pub fn view_by_id(counter_map: &CounterMap, args: &CliArgs) {
-    let data_provider = AggregatedIdCountsData::new(counter_map);
+    let data_provider = AggregationResult::<HashMap<String, u64>>::new(counter_map);
     let grand_total_numeric_count = data_provider.total_combined.values().sum();
     let report_data = generate_report_data(
         &data_provider,
@@ -153,21 +153,21 @@ mod tests {
     }
 
     #[test]
-    fn test_aggregated_data_new() {
+    fn test_aggregation_result_counter_new() {
         let counter_map = create_sample_counter_map();
-        let agg_data = AggregatedData::new(&counter_map);
+        let agg_data = AggregationResult::<Counter>::new(&counter_map);
 
         assert_eq!(agg_data.grouped.len(), 3);
         assert_eq!(
             agg_data.total_combined.total(),
-            (10 + 5) + (5 + 15) + 3 + (1 + 1)
+            (10 + 5) + (5 + 15) + 3 + (1 + 1) // 15 + 20 + 3 + 2 = 40
         );
     }
 
     #[test]
-    fn test_aggregated_id_counts_data_new() {
+    fn test_aggregation_result_id_counts_new() {
         let counter_map = create_sample_counter_map();
-        let agg_id_data = AggregatedIdCountsData::new(&counter_map);
+        let agg_id_data = AggregationResult::<HashMap<String, u64>>::new(&counter_map);
         assert_eq!(
             agg_id_data.total_combined.values().sum::<u64>(),
             13 + 5 + 5 + 15 + 1 + 1
@@ -195,7 +195,7 @@ mod tests {
         let mut args = mock_cli_args();
         args.view = ViewMode::ById;
 
-        let data_provider = AggregatedIdCountsData::new(&counter_map);
+        let data_provider = AggregationResult::<HashMap<String, u64>>::new(&counter_map);
         let mut printed_labels_counts: HashMap<String, usize> = HashMap::new();
 
         // Case 1: No dimension/type flags
@@ -292,7 +292,7 @@ mod tests {
         args.view = ViewMode::Detailed;
 
         let grand_total_numeric_count = counter_map.combined().total();
-        let data_provider = AggregatedData::new(&counter_map);
+        let data_provider = AggregationResult::<Counter>::new(&counter_map);
 
         let report_data = generate_report_data(
             &data_provider,
@@ -340,7 +340,7 @@ mod tests {
         args.per_dimension_summary = true;
         args.per_data_type_summary = true;
 
-        let data_provider = AggregatedIdCountsData::new(&counter_map);
+        let data_provider = AggregationResult::<HashMap<String, u64>>::new(&counter_map);
         let grand_total_numeric_count = data_provider.total_combined.values().sum();
 
         let report_data = generate_report_data(
