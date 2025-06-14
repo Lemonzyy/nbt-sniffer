@@ -1,7 +1,7 @@
 use clap::Parser;
 use nbt_sniffer::{
     DataType, ScanTask, Scope,
-    cli::{CliArgs, ViewMode, parse_item_args},
+    cli::{CliArgs, OutputFormat, ViewMode, parse_item_args},
     counter::CounterMap,
     extract_single_player_uuid_from_level_dat, list_mca_files, process_task,
     view::{IsEmpty, view_by_id, view_by_nbt, view_detailed},
@@ -106,7 +106,7 @@ fn main() {
         ViewMode::ByNbt => view_by_nbt(&counter_map, &args),
     }
 
-    if !counter_map.is_empty() {
+    if args.output_format == OutputFormat::Table && !counter_map.is_empty() {
         println!("\nTotal items matched: {}", counter_map.combined().total());
         println!("Scan completed in {:?}", start.elapsed());
     }
