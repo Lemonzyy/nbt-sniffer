@@ -104,13 +104,13 @@ impl<T: Aggregable> AggregationResult<T> {
             grouped
                 .entry(scope.dimension.clone())
                 .or_default()
-                .entry(scope.data_type.clone())
+                .entry(scope.data_type)
                 .or_insert_with(T::new_empty)
                 .merge(&item_summary);
 
             // Populate total_by_type
             total_by_type
-                .entry(scope.data_type.clone())
+                .entry(scope.data_type)
                 .or_insert_with(T::new_empty)
                 .merge(&item_summary);
 

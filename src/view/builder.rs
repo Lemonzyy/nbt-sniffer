@@ -2,6 +2,7 @@ use super::{aggregation::SummaryDataProvider, structures::Report};
 use crate::{DataType, cli::CliArgs, view::IsEmpty};
 use serde::Serialize;
 use std::collections::HashMap;
+use strum::IntoEnumIterator;
 
 fn build_per_dimension_summary_section<P, TItem, F>(
     provider: &P,
@@ -15,13 +16,8 @@ where
     let mut dim_summaries_map = HashMap::new();
     for dimension in provider.get_grouped_data().keys() {
         let combined_dim_summary = provider.calculate_dimension_combined_summary(dimension);
-        if !provider
-            .get_grouped_data()
-            .get(dimension)
-            .unwrap()
-            .is_empty()
-        {
-            // Check if the dimension itself has data
+        // Ensure the combined summary for the dimension is not empty before adding
+        if !combined_dim_summary.is_empty() {
             dim_summaries_map.insert(dimension.clone(), to_item_entries(&combined_dim_summary));
         }
     }
@@ -35,25 +31,24 @@ where
 fn build_per_data_type_summary_section<P, TItem, F>(
     provider: &P,
     to_item_entries: &F,
-) -> Option<HashMap<String, Vec<TItem>>>
+) -> Option<HashMap<DataType, Vec<TItem>>>
 where
     P: SummaryDataProvider,
     TItem: Serialize,
     F: Fn(&P::ItemSummary) -> Vec<TItem>,
 {
     let mut type_summaries_map = HashMap::new();
-    let mut insert_if_not_empty = |data_type: DataType, summary_item: &P::ItemSummary| {
-        if !summary_item.is_empty() {
-            type_summaries_map.insert(data_type.to_string(), to_item_entries(summary_item));
-        }
-    };
 
-    insert_if_not_empty(
-        DataType::BlockEntity,
-        provider.get_total_block_entity_summary(),
-    );
-    insert_if_not_empty(DataType::Entity, provider.get_total_entity_summary());
-    insert_if_not_empty(DataType::Player, provider.get_total_player_data_summary());
+    for data_type in DataType::iter() {
+        let summary_item = match data_type {
+            DataType::BlockEntity => provider.get_total_block_entity_summary(),
+            DataType::Entity => provider.get_total_entity_summary(),
+            DataType::Player => provider.get_total_player_data_summary(),
+        };
+        if !summary_item.is_empty() {
+            type_summaries_map.insert(data_type, to_item_entries(summary_item));
+        }
+    }
 
     if type_summaries_map.is_empty() {
         None
@@ -65,7 +60,7 @@ where
 fn build_per_dimension_detail_section<P, TItem, F>(
     provider: &P,
     to_item_entries: &F,
-) -> Option<HashMap<String, HashMap<String, Vec<TItem>>>>
+) -> Option<HashMap<String, HashMap<DataType, Vec<TItem>>>>
 where
     P: SummaryDataProvider,
     TItem: Serialize,
@@ -74,19 +69,14 @@ where
     let mut per_dimension_detail_map = HashMap::new();
     for (dimension, types_map) in provider.get_grouped_data() {
         let mut current_dim_data_type_map = HashMap::new();
-        let mut insert_if_not_empty =
-            |data_type: DataType, summary_item_opt: Option<&P::ItemSummary>| {
-                if let Some(summary_item) = summary_item_opt
-                    && !summary_item.is_empty()
-                {
-                    current_dim_data_type_map
-                        .insert(data_type.to_string(), to_item_entries(summary_item));
-                }
-            };
 
-        insert_if_not_empty(DataType::BlockEntity, types_map.get(&DataType::BlockEntity));
-        insert_if_not_empty(DataType::Entity, types_map.get(&DataType::Entity));
-        insert_if_not_empty(DataType::Player, types_map.get(&DataType::Player));
+        for data_type in DataType::iter() {
+            if let Some(summary_item) = types_map.get(&data_type)
+                && !summary_item.is_empty()
+            {
+                current_dim_data_type_map.insert(data_type, to_item_entries(summary_item));
+            }
+        }
 
         if !current_dim_data_type_map.is_empty() {
             per_dimension_detail_map.insert(dimension.clone(), current_dim_data_type_map);
@@ -111,11 +101,11 @@ where
     F: Fn(&P::ItemSummary) -> Vec<TItem>,
 {
     Report::<TItem> {
-        per_dimension: args
+        per_dimension_summary: args
             .per_dimension_summary
             .then(|| build_per_dimension_summary_section(provider, &to_item_entries))
             .flatten(),
-        per_data_type: args
+        per_data_type_summary: args
             .per_data_type_summary
             .then(|| build_per_data_type_summary_section(provider, &to_item_entries))
             .flatten(),

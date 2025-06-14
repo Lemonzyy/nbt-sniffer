@@ -6,7 +6,6 @@ pub mod view;
 
 use std::{
     collections::HashMap,
-    fmt,
     io::{Cursor, Read},
     path::{Path, PathBuf},
 };
@@ -17,6 +16,7 @@ use flate2::read::GzDecoder;
 use mca::RegionReader;
 use nbt_utils::{convert_simdnbt_to_valence_nbt, get_entity_pos_string};
 use ptree::print_tree;
+use serde::{Deserialize, Serialize};
 use tree::ItemSummaryNode;
 use valence_nbt::Value;
 
@@ -28,25 +28,28 @@ pub struct Scope {
     pub data_type: DataType,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::EnumIter,
+)]
 pub enum DataType {
+    #[strum(to_string = "Block Entity")]
     BlockEntity,
+    #[strum(to_string = "Entity")]
     Entity,
+    #[strum(to_string = "Player Data")]
     Player,
-}
-
-impl fmt::Display for DataType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                DataType::BlockEntity => "Block Entity",
-                DataType::Entity => "Entity",
-                DataType::Player => "Player Data",
-            }
-        )
-    }
 }
 
 pub struct ScanTask {

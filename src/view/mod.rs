@@ -12,6 +12,7 @@ use crate::{
     counter::{Counter, CounterMap},
 };
 use aggregation::{AggregationResult, IsEmpty};
+use serde::Serialize;
 use serde_json::json;
 
 use builder::generate_report_data;
@@ -21,13 +22,26 @@ use table_printer::{
     print_detailed_counter, print_id_map, print_nbt_counter, print_report_as_tables,
 };
 
-pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
-    let data_provider = AggregationResult::<Counter>::new(counter_map);
-    let grand_total_numeric_count = data_provider.total_combined.total();
+/// Generic helper to generate and output a report based on the view mode.
+fn generate_and_output_report<TAggregable, FConvert, FPrintTable, TReportItem>(
+    counter_map: &CounterMap,
+    args: &CliArgs,
+    item_converter: FConvert,
+    table_printer: FPrintTable,
+    grand_total_calculator: impl Fn(&TAggregable) -> u64,
+) where
+    TAggregable: aggregation::Aggregable,
+    FConvert: Fn(&TAggregable) -> Vec<TReportItem>,
+    FPrintTable: FnMut(&[TReportItem]),
+    TReportItem: Serialize + Clone,
+{
+    let data_provider = AggregationResult::<TAggregable>::new(counter_map);
+    let grand_total_numeric_count = grand_total_calculator(&data_provider.total_combined);
+
     let report_data = generate_report_data(
         &data_provider,
         args,
-        to_detailed_item_entries,
+        item_converter,
         grand_total_numeric_count,
     );
 
@@ -38,50 +52,38 @@ pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
         });
         print_json_output(&json_value, args.output_format == OutputFormat::PrettyJson);
     } else {
-        print_report_as_tables(&report_data, args, print_detailed_counter);
+        print_report_as_tables(&report_data, args, table_printer);
     }
+}
+
+pub fn view_detailed(counter_map: &CounterMap, args: &CliArgs) {
+    generate_and_output_report(
+        counter_map,
+        args,
+        to_detailed_item_entries,
+        print_detailed_counter,
+        |counter: &Counter| counter.total(),
+    );
 }
 
 pub fn view_by_nbt(counter_map: &CounterMap, args: &CliArgs) {
-    let data_provider = AggregationResult::<Counter>::new(counter_map);
-    let grand_total_numeric_count = data_provider.total_combined.total();
-    let report_data = generate_report_data(
-        &data_provider,
+    generate_and_output_report(
+        counter_map,
         args,
         to_nbt_item_entries,
-        grand_total_numeric_count,
+        print_nbt_counter,
+        |counter: &Counter| counter.total(),
     );
-
-    if args.output_format.is_json() {
-        let json_value = serde_json::to_value(&report_data).unwrap_or_else(|e| {
-            eprintln!("Error serializing report to JSON: {e}");
-            json!({ "error": format!("Failed to serialize report: {e}") })
-        });
-        print_json_output(&json_value, args.output_format == OutputFormat::PrettyJson);
-    } else {
-        print_report_as_tables(&report_data, args, print_nbt_counter);
-    }
 }
 
 pub fn view_by_id(counter_map: &CounterMap, args: &CliArgs) {
-    let data_provider = AggregationResult::<HashMap<String, u64>>::new(counter_map);
-    let grand_total_numeric_count = data_provider.total_combined.values().sum();
-    let report_data = generate_report_data(
-        &data_provider,
+    generate_and_output_report(
+        counter_map,
         args,
         to_id_item_entries,
-        grand_total_numeric_count,
+        print_id_map,
+        |map: &HashMap<String, u64>| map.values().sum(),
     );
-
-    if args.output_format.is_json() {
-        let json_value = serde_json::to_value(&report_data).unwrap_or_else(|e| {
-            eprintln!("Error serializing report to JSON: {e}");
-            json!({ "error": format!("Failed to serialize report: {e}") })
-        });
-        print_json_output(&json_value, args.output_format == OutputFormat::PrettyJson);
-    } else {
-        print_report_as_tables(&report_data, args, print_id_map);
-    }
 }
 
 #[cfg(test)]
@@ -170,7 +172,7 @@ mod tests {
         let agg_id_data = AggregationResult::<HashMap<String, u64>>::new(&counter_map);
         assert_eq!(
             agg_id_data.total_combined.values().sum::<u64>(),
-            13 + 5 + 5 + 15 + 1 + 1
+            13 + 5 + 5 + 15 + 1 + 1 // chest(10+3) + furnace(5) + iron_sword(5) + rotten_flesh(15) + diamond_sword(1) + ender_pearl(1)
         );
     }
 
@@ -203,7 +205,7 @@ mod tests {
             &data_provider,
             &args,
             to_id_item_entries,
-            data_provider.total_combined.values().sum(),
+            data_provider.get_total_combined_summary().values().sum(),
         );
         print_report_as_tables(&report_data_case1, &args, |items| {
             if !items.is_empty() {
@@ -214,7 +216,7 @@ mod tests {
         });
         assert_eq!(
             printed_labels_counts.get("section_processed_case1"),
-            Some(&1)
+            Some(&1) // Only grand total
         );
         printed_labels_counts.clear();
 
@@ -224,7 +226,7 @@ mod tests {
             &data_provider,
             &args,
             to_id_item_entries,
-            data_provider.total_combined.values().sum(),
+            data_provider.get_total_combined_summary().values().sum(),
         );
         print_report_as_tables(&report_data_case2, &args, |items| {
             if !items.is_empty() {
@@ -235,7 +237,7 @@ mod tests {
         });
         assert_eq!(
             printed_labels_counts.get("section_processed_case2"),
-            Some(&4)
+            Some(&4) // 3 dimensions + grand total
         );
         printed_labels_counts.clear();
         args.per_dimension_summary = false;
@@ -246,7 +248,7 @@ mod tests {
             &data_provider,
             &args,
             to_id_item_entries,
-            data_provider.total_combined.values().sum(),
+            data_provider.get_total_combined_summary().values().sum(),
         );
         print_report_as_tables(&report_data_case3, &args, |items| {
             if !items.is_empty() {
@@ -257,7 +259,7 @@ mod tests {
         });
         assert_eq!(
             printed_labels_counts.get("section_processed_case3"),
-            Some(&4)
+            Some(&4) // 3 data types + grand total
         );
         printed_labels_counts.clear();
         args.per_data_type_summary = false;
@@ -269,7 +271,7 @@ mod tests {
             &data_provider,
             &args,
             to_id_item_entries,
-            data_provider.total_combined.values().sum(),
+            data_provider.get_total_combined_summary().values().sum(),
         );
         print_report_as_tables(&report_data_case4, &args, |items| {
             if !items.is_empty() {
@@ -305,8 +307,8 @@ mod tests {
 
         assert!(json_value.is_object());
         let obj = json_value.as_object().unwrap();
-        assert!(obj.get("per_dimension").is_none());
-        assert!(obj.get("per_data_type").is_none());
+        assert!(obj.get("per_dimension_summary").is_none());
+        assert!(obj.get("per_data_type_summary").is_none());
         assert!(obj.get("per_dimension_detail").is_none());
         assert!(obj.get("grand_total").is_some());
         assert_eq!(
@@ -341,7 +343,7 @@ mod tests {
         args.per_data_type_summary = true;
 
         let data_provider = AggregationResult::<HashMap<String, u64>>::new(&counter_map);
-        let grand_total_numeric_count = data_provider.total_combined.values().sum();
+        let grand_total_numeric_count = data_provider.get_total_combined_summary().values().sum();
 
         let report_data = generate_report_data(
             &data_provider,
@@ -353,8 +355,8 @@ mod tests {
 
         assert!(json_value.is_object());
         let obj = json_value.as_object().unwrap();
-        assert!(obj.get("per_dimension").is_some());
-        assert!(obj.get("per_data_type").is_some());
+        assert!(obj.get("per_dimension_summary").is_some());
+        assert!(obj.get("per_data_type_summary").is_some());
         assert!(obj.get("per_dimension_detail").is_some());
         assert!(obj.get("grand_total").is_some());
         assert_eq!(
@@ -362,14 +364,28 @@ mod tests {
             Some(&json!(grand_total_numeric_count))
         );
 
-        let per_dim = obj.get("per_dimension").unwrap().as_object().unwrap();
+        let per_dim = obj
+            .get("per_dimension_summary")
+            .unwrap()
+            .as_object()
+            .unwrap();
         assert!(per_dim.contains_key("overworld"));
         let overworld_summary = per_dim.get("overworld").unwrap().as_array().unwrap();
         if !overworld_summary.is_empty() {
             let first_item = overworld_summary[0].as_object().unwrap();
             assert!(first_item.contains_key("count"));
             assert!(first_item.contains_key("id"));
-            assert!(!first_item.contains_key("nbt"));
+            assert!(!first_item.contains_key("nbt")); // ById view doesn't have NBT in items
         }
+
+        // Check that per_data_type_summary keys are serialized as strings by serde_json
+        let per_type_summary = obj
+            .get("per_data_type_summary")
+            .unwrap()
+            .as_object()
+            .unwrap();
+        assert!(per_type_summary.contains_key("BlockEntity")); // strum::Display is "Block Entity", but serde_json uses variant name for enum keys
+        assert!(per_type_summary.contains_key("Entity"));
+        assert!(per_type_summary.contains_key("Player"));
     }
 }

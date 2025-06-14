@@ -144,7 +144,7 @@ fn create_mca_scan_tasks(dimension_roots: &[PathBuf], cli_args: &CliArgs) -> Vec
                                 path: file,
                                 scope: Scope {
                                     dimension: dimension.clone(),
-                                    data_type: data_type.clone(),
+                                    data_type,
                                 },
                             });
                         }

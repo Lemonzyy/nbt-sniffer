@@ -4,7 +4,68 @@ use crate::{
     cli::{CliArgs, ViewMode},
 };
 use comfy_table::{Cell, CellAlignment, ContentArrangement, Table, presets};
-use serde::Serialize; // Needed for TItem: Serialize bound in print_report_as_tables
+use serde::Serialize;
+use strum::IntoEnumIterator;
+
+/// Defines the type of section being printed for table output, used to determine titles and formatting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PrintSectionType<'a> {
+    DimensionSummary(&'a str), // Dimension name for its overall summary
+    GlobalDataTypeSummary(DataType),
+    DimensionDataTypeDetail(&'a str, DataType), // Dimension name, DataType
+    DimensionOverallSummary(&'a str),           // "Summary" label for a dimension's combined types
+    GrandTotal,
+}
+
+impl<'a> PrintSectionType<'a> {
+    /// Gets the display title for the section and a prefix (e.g., for indentation).
+    fn get_title_and_prefix(&self, view_mode: &ViewMode) -> (String, String) {
+        match self {
+            PrintSectionType::DimensionSummary(dim) => {
+                (format!("Dimension: {dim}"), "".to_string())
+            }
+            PrintSectionType::GlobalDataTypeSummary(dt) => {
+                let base_title = dt.to_string();
+                if *view_mode == ViewMode::ByNbt {
+                    (format!("Total {base_title}"), "".to_string())
+                } else {
+                    (base_title, "".to_string())
+                }
+            }
+            PrintSectionType::DimensionDataTypeDetail(_dim, dt) => {
+                (dt.to_string(), "  ".to_string())
+            } // Indent
+            PrintSectionType::DimensionOverallSummary(_dim) => {
+                ("Summary".to_string(), "  ".to_string())
+            } // Indent
+            PrintSectionType::GrandTotal => ("Total".to_string(), "".to_string()),
+        }
+    }
+}
+
+/// Helper to print a single section of the report.
+fn print_section_content<TItem>(
+    items: &[TItem],
+    section_type: &PrintSectionType,
+    view_mode: &ViewMode,
+    print_items_fn: &mut impl FnMut(&[TItem]),
+    needs_leading_newline: bool,
+) where
+    TItem: Clone + Serialize,
+{
+    if items.is_empty() {
+        return;
+    }
+
+    let (title, prefix) = section_type.get_title_and_prefix(view_mode);
+
+    if needs_leading_newline {
+        println!();
+    }
+
+    println!("{prefix}{title}:");
+    print_items_fn(items);
+}
 
 /// Prints the report data as formatted tables.
 pub fn print_report_as_tables<TItem>(
@@ -14,99 +75,111 @@ pub fn print_report_as_tables<TItem>(
 ) where
     TItem: Clone + Serialize,
 {
-    let mut print_section = |items: &Vec<TItem>, label: &str| {
-        if !items.is_empty() {
-            let mut effective_label = label.to_string();
-            if label.starts_with('\n') {
-                effective_label = label.trim_start_matches('\n').to_string();
-            }
-
-            let display_label = if args.view == ViewMode::ByNbt {
-                match effective_label.as_str() {
-                    "Block Entity" => "Total Block Entity".to_string(),
-                    "Entity" => "Total Entity".to_string(),
-                    "Player Data" => "Total Player Data".to_string(),
-                    _ => effective_label,
-                }
-            } else {
-                effective_label
-            };
-
-            let is_by_nbt_special_label = args.view == ViewMode::ByNbt
-                && (label == "Block Entity" || label == "Entity" || label == "Player Data");
-
-            if label.starts_with("Dimension:")
-                || is_by_nbt_special_label
-                || (args.view != ViewMode::ByNbt
-                    && !label.starts_with('\n')
-                    && label != "Total"
-                    && label != "Summary")
-            {
-                println!("{display_label}:");
-            } else if label.starts_with('\n') || label == "Total" || label == "Summary" {
-                println!("{}:", display_label.trim_start_matches('\n'));
-            }
-
-            print_items_fn(items);
-        }
-    };
+    let mut needs_newline_for_next_major_section = false;
 
     match (args.per_dimension_summary, args.per_data_type_summary) {
-        (false, false) => {}
+        (false, false) => {
+            // No specific summaries, only grand total will be printed later
+        }
         (true, false) => {
-            if let Some(per_dimension_data) = &report.per_dimension {
-                for (dimension_name, items) in per_dimension_data {
-                    print_section(items, &format!("Dimension: {dimension_name}"));
+            // Only per-dimension summaries
+            if let Some(per_dimension_data) = &report.per_dimension_summary {
+                for (i, (dimension_name, items)) in per_dimension_data.iter().enumerate() {
+                    print_section_content(
+                        items,
+                        &PrintSectionType::DimensionSummary(dimension_name),
+                        &args.view,
+                        &mut print_items_fn,
+                        i > 0, // Add newline before subsequent dimension summaries
+                    );
+                    needs_newline_for_next_major_section = true;
                 }
             }
         }
         (false, true) => {
-            if let Some(per_data_type_data) = &report.per_data_type {
-                if let Some(items) = per_data_type_data.get(&DataType::BlockEntity.to_string()) {
-                    print_section(items, "Block Entity");
-                }
-                if let Some(items) = per_data_type_data.get(&DataType::Entity.to_string()) {
-                    print_section(items, "Entity");
-                }
-                if let Some(items) = per_data_type_data.get(&DataType::Player.to_string()) {
-                    print_section(items, "Player Data");
+            // Only per-data_type summaries (global)
+            if let Some(per_data_type_data) = &report.per_data_type_summary {
+                for (i, data_type) in DataType::iter().enumerate() {
+                    if let Some(items) = per_data_type_data.get(&data_type) {
+                        print_section_content(
+                            items,
+                            &PrintSectionType::GlobalDataTypeSummary(data_type),
+                            &args.view,
+                            &mut print_items_fn,
+                            i > 0, // Add newline before subsequent global type summaries
+                        );
+                        needs_newline_for_next_major_section = true;
+                    }
                 }
             }
         }
         (true, true) => {
+            // Both per-dimension details and global summaries
             if let Some(per_dimension_detail_data) = &report.per_dimension_detail {
                 for (dimension_name, type_map) in per_dimension_detail_data {
-                    println!("\nDimension: {dimension_name}");
-                    if let Some(items) = type_map.get(&DataType::BlockEntity.to_string()) {
-                        print_section(items, "Block Entity");
+                    println!("\nDimension: {dimension_name}"); // Always start a new dimension section with a newline
+                    needs_newline_for_next_major_section = true;
+                    for data_type in DataType::iter() {
+                        if let Some(items) = type_map.get(&data_type) {
+                            print_section_content(
+                                items,
+                                &PrintSectionType::DimensionDataTypeDetail(
+                                    dimension_name,
+                                    data_type,
+                                ),
+                                &args.view,
+                                &mut print_items_fn,
+                                false, // No extra newline within a dimension's details
+                            );
+                        }
                     }
-                    if let Some(items) = type_map.get(&DataType::Entity.to_string()) {
-                        print_section(items, "Entity");
-                    }
-                    if let Some(items) = type_map.get(&DataType::Player.to_string()) {
-                        print_section(items, "Player Data");
-                    }
-                    if let Some(per_dimension_data) = &report.per_dimension
+                    // Print "Summary" for the dimension
+                    if let Some(per_dimension_data) = &report.per_dimension_summary
                         && let Some(dim_summary_items) = per_dimension_data.get(dimension_name)
                     {
-                        print_section(dim_summary_items, "Summary");
+                        print_section_content(
+                            dim_summary_items,
+                            &PrintSectionType::DimensionOverallSummary(dimension_name),
+                            &args.view,
+                            &mut print_items_fn,
+                            false, // No extra newline for the dimension's own summary
+                        );
                     }
                 }
             }
-            if let Some(per_data_type_data) = &report.per_data_type {
-                if let Some(items) = per_data_type_data.get(&DataType::BlockEntity.to_string()) {
-                    print_section(items, "\nBlock Entity");
-                }
-                if let Some(items) = per_data_type_data.get(&DataType::Entity.to_string()) {
-                    print_section(items, "Entity");
-                }
-                if let Some(items) = per_data_type_data.get(&DataType::Player.to_string()) {
-                    print_section(items, "Player Data");
+            // Print global data type summaries
+            if let Some(per_data_type_data) = &report.per_data_type_summary {
+                let mut first_global_summary_printed = false;
+                for data_type in DataType::iter() {
+                    if let Some(items) = per_data_type_data.get(&data_type) {
+                        // Add newline if it's not the very first global summary AND
+                        // (either dimension details were printed OR it's not the first global summary item)
+                        let needs_newline =
+                            needs_newline_for_next_major_section || first_global_summary_printed;
+                        print_section_content(
+                            items,
+                            &PrintSectionType::GlobalDataTypeSummary(data_type),
+                            &args.view,
+                            &mut print_items_fn,
+                            needs_newline,
+                        );
+                        first_global_summary_printed = true;
+                        needs_newline_for_next_major_section = true; // Ensure next major section (like Total) gets a newline
+                    }
                 }
             }
         }
     }
-    print_section(&report.grand_total, "Total");
+    // Always print grand total
+    let grand_total_needs_newline =
+        needs_newline_for_next_major_section && !report.grand_total.is_empty();
+    print_section_content(
+        &report.grand_total,
+        &PrintSectionType::GrandTotal,
+        &args.view,
+        &mut print_items_fn,
+        grand_total_needs_newline,
+    );
 }
 
 pub fn print_detailed_counter(items: &[ReportItemDetailed]) {
@@ -115,7 +188,7 @@ pub fn print_detailed_counter(items: &[ReportItemDetailed]) {
     }
     print_table(
         &["Count", "ID", "NBT"],
-        items.to_vec(),
+        items,
         |item| {
             vec![
                 Cell::new(item.count),
@@ -133,7 +206,7 @@ pub fn print_id_map(items: &[ReportItemId]) {
     }
     print_table(
         &["Count", "Item ID"],
-        items.to_vec(),
+        items,
         |item| vec![Cell::new(item.count), Cell::new(&item.id)],
         None,
     );
@@ -145,7 +218,7 @@ pub fn print_nbt_counter(items: &[ReportItemNbt]) {
     }
     print_table(
         &["Count", "NBT"],
-        items.to_vec(),
+        items,
         |item| vec![Cell::new(item.count), Cell::new(&item.nbt)],
         Some(1),
     );
@@ -153,12 +226,11 @@ pub fn print_nbt_counter(items: &[ReportItemNbt]) {
 
 fn print_table<T, F>(
     headers: &[&str],
-    data: Vec<T>,
+    data: &[T],
     mut row_formatter: F,
-    left_align_col: Option<usize>,
+    left_align_col_idx: Option<usize>,
 ) where
     F: FnMut(&T) -> Vec<Cell>,
-    T: Clone,
 {
     let mut table = Table::new();
     table
@@ -169,14 +241,15 @@ fn print_table<T, F>(
                 .iter()
                 .map(|&h| Cell::new(h).set_alignment(CellAlignment::Center)),
         );
-    if let Some(col_idx) = left_align_col
-        && let Some(col) = table.column_mut(col_idx)
+
+    if let Some(col_idx) = left_align_col_idx
+        && let Some(column) = table.column_mut(col_idx)
     {
-        col.set_cell_alignment(CellAlignment::Left);
+        column.set_cell_alignment(CellAlignment::Left);
     }
 
     for item in data {
-        table.add_row(row_formatter(&item));
+        table.add_row(row_formatter(item));
     }
     println!("{table}");
 }
