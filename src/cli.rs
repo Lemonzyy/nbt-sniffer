@@ -48,6 +48,10 @@ pub struct CliArgs {
     /// Increase output verbosity
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// Specify the output format
+    #[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+    pub output_format: OutputFormat,
 }
 
 /// Which summary‐format to display.
@@ -61,6 +65,20 @@ pub enum ViewMode {
 
     /// Summarize counts by NBT only
     ByNbt,
+}
+
+/// Which output format to use for the summary tables.
+#[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    Table,
+    Json,
+    PrettyJson,
+}
+
+impl OutputFormat {
+    pub fn is_json(&self) -> bool {
+        matches!(self, OutputFormat::Json | OutputFormat::PrettyJson)
+    }
 }
 
 /// Represents a query for an item and its optional NBT filters

@@ -424,7 +424,7 @@ mod tests {
     use super::*;
     use crate::{
         DataType, Scope,
-        cli::{CliArgs, ViewMode},
+        cli::{CliArgs, OutputFormat, ViewMode},
         counter::{Counter, CounterMap},
     };
     use std::path::PathBuf;
@@ -609,6 +609,7 @@ mod tests {
             per_dimension_summary: false,
             per_data_type_summary: false,
             verbose: false,
+            output_format: OutputFormat::Table
         }
     }
 
