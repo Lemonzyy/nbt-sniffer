@@ -4,7 +4,7 @@ use nbt_sniffer::{
     cli::{CliArgs, OutputFormat, ViewMode, parse_item_args},
     counter::CounterMap,
     extract_single_player_uuid_from_level_dat, list_mca_files, process_task,
-    view::{IsEmpty, view_by_id, view_by_nbt, view_detailed},
+    view::{aggregation::IsEmpty, view_by_id, view_by_nbt, view_detailed},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::Deserialize;
