@@ -26,7 +26,7 @@ pub struct CliArgs {
     pub items: Vec<String>,
 
     /// Which summary format to display.
-    #[arg(long, value_enum, default_value_t = ViewMode::ById)]
+    #[arg(short, long, value_enum, default_value_t = ViewMode::ById)]
     pub view: ViewMode,
 
     /// Show full NBT data in item summaries
@@ -46,12 +46,12 @@ pub struct CliArgs {
     pub per_data_type_summary: bool,
 
     /// Increase output verbosity
-    #[arg(short, long)]
+    #[arg(long)]
     pub verbose: bool,
 
     /// Specify the output format
-    #[arg(long, value_enum, default_value_t = OutputFormat::Table)]
-    pub output_format: OutputFormat,
+    #[arg(short, long, value_enum, default_value_t = OutputFormat::Table)]
+    pub format: OutputFormat,
 }
 
 /// Which summary‐format to display.

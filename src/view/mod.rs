@@ -45,12 +45,12 @@ fn generate_and_output_report<TAggregable, FConvert, FPrintTable, TReportItem>(
         grand_total_numeric_count,
     );
 
-    if args.output_format.is_json() {
+    if args.format.is_json() {
         let json_value = serde_json::to_value(&report_data).unwrap_or_else(|e| {
             eprintln!("Error serializing report to JSON: {e}");
             json!({ "error": format!("Failed to serialize report: {e}") })
         });
-        print_json_output(&json_value, args.output_format == OutputFormat::PrettyJson);
+        print_json_output(&json_value, args.format == OutputFormat::PrettyJson);
     } else {
         print_report_as_tables(&report_data, args, table_printer);
     }
@@ -187,7 +187,7 @@ mod tests {
             per_dimension_summary: false,
             per_data_type_summary: false,
             verbose: false,
-            output_format: OutputFormat::Table,
+            format: OutputFormat::Table,
         }
     }
 
@@ -290,7 +290,7 @@ mod tests {
     fn test_json_report_serialization_structure_detailed_view_no_flags() {
         let counter_map = create_sample_counter_map();
         let mut args = mock_cli_args();
-        args.output_format = OutputFormat::Json;
+        args.format = OutputFormat::Json;
         args.view = ViewMode::Detailed;
 
         let grand_total_numeric_count = counter_map.combined().total();
@@ -370,7 +370,7 @@ mod tests {
     fn test_json_report_serialization_structure_by_id_view_all_flags() {
         let counter_map = create_sample_counter_map();
         let mut args = mock_cli_args();
-        args.output_format = OutputFormat::Json;
+        args.format = OutputFormat::Json;
         args.view = ViewMode::ById;
         args.per_dimension_summary = true;
         args.per_data_type_summary = true;
