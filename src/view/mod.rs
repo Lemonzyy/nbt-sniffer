@@ -323,14 +323,47 @@ mod tests {
             .len();
         assert_eq!(
             grand_total_arr.len(),
-            expected_distinct_items_in_grand_total
+            expected_distinct_items_in_grand_total,
+            "Grand total array length mismatch"
         );
-        if !grand_total_arr.is_empty() {
-            let first_item = grand_total_arr[0].as_object().unwrap();
-            assert!(first_item.contains_key("count"));
-            assert!(first_item.contains_key("id"));
-            assert!(first_item.contains_key("nbt"));
+
+        let mut iron_sword_found_and_checked = false;
+        let mut rotten_flesh_found_and_checked = false;
+
+        for item_value in grand_total_arr {
+            let item_obj = item_value.as_object().unwrap();
+            assert!(item_obj.contains_key("count"), "Item missing 'count' field");
+            assert!(item_obj.contains_key("id"), "Item missing 'id' field");
+
+            let id = item_obj.get("id").unwrap().as_str().unwrap();
+            if id == "minecraft:iron_sword" {
+                // This item has NBT in sample data
+                assert!(
+                    item_obj.contains_key("nbt"),
+                    "Iron sword should have NBT field"
+                );
+                assert!(
+                    item_obj.get("nbt").unwrap().is_string(),
+                    "Iron sword NBT should be a string"
+                );
+                iron_sword_found_and_checked = true;
+            } else if id == "minecraft:rotten_flesh" {
+                // This item does not have NBT
+                assert!(
+                    !item_obj.contains_key("nbt"),
+                    "Rotten flesh should not have NBT field"
+                );
+                rotten_flesh_found_and_checked = true;
+            }
         }
+        assert!(
+            iron_sword_found_and_checked,
+            "Iron sword with NBT not found or checked in grand total"
+        );
+        assert!(
+            rotten_flesh_found_and_checked,
+            "Rotten flesh without NBT not found or checked in grand total"
+        );
     }
 
     #[test]

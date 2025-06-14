@@ -7,7 +7,8 @@ use crate::DataType;
 pub struct ReportItemDetailed {
     pub count: u64,
     pub id: String,
-    pub nbt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nbt: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -19,7 +20,8 @@ pub struct ReportItemId {
 #[derive(Serialize, Clone)]
 pub struct ReportItemNbt {
     pub count: u64,
-    pub nbt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nbt: Option<String>,
 }
 
 #[derive(Serialize)]

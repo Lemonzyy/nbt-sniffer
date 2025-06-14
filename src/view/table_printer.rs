@@ -193,7 +193,7 @@ pub fn print_detailed_counter(items: &[ReportItemDetailed]) {
             vec![
                 Cell::new(item.count),
                 Cell::new(&item.id),
-                Cell::new(&item.nbt),
+                Cell::new(item.nbt.clone().unwrap_or_else(|| "No NBT".into())),
             ]
         },
         Some(2),
@@ -219,7 +219,12 @@ pub fn print_nbt_counter(items: &[ReportItemNbt]) {
     print_table(
         &["Count", "NBT"],
         items,
-        |item| vec![Cell::new(item.count), Cell::new(&item.nbt)],
+        |item| {
+            vec![
+                Cell::new(item.count),
+                Cell::new(item.nbt.clone().unwrap_or_else(|| "No NBT".into())),
+            ]
+        },
         Some(1),
     );
 }

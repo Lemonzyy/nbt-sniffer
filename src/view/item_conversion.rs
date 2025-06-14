@@ -2,13 +2,6 @@ use super::structures::{ReportItemDetailed, ReportItemId, ReportItemNbt};
 use crate::{counter::Counter, escape_nbt_string};
 use std::collections::HashMap;
 
-pub fn format_nbt_string(nbt_opt: &Option<String>) -> String {
-    nbt_opt
-        .as_deref()
-        .map(escape_nbt_string)
-        .unwrap_or_else(|| "No NBT".into())
-}
-
 pub fn to_detailed_item_entries(counter: &Counter) -> Vec<ReportItemDetailed> {
     let mut detailed_vec: Vec<_> = counter
         .detailed_counts()
@@ -28,7 +21,7 @@ pub fn to_detailed_item_entries(counter: &Counter) -> Vec<ReportItemDetailed> {
         .map(|(id, nbt_opt, count)| ReportItemDetailed {
             count: *count,
             id: id.clone(),
-            nbt: format_nbt_string(nbt_opt),
+            nbt: nbt_opt.as_ref().map(|s| escape_nbt_string(s)),
         })
         .collect()
 }
@@ -55,7 +48,7 @@ pub fn to_nbt_item_entries(counter: &Counter) -> Vec<ReportItemNbt> {
         .iter()
         .map(|(nbt_opt, count)| ReportItemNbt {
             count: *count,
-            nbt: format_nbt_string(nbt_opt),
+            nbt: nbt_opt.as_ref().map(|s| escape_nbt_string(s)),
         })
         .collect()
 }
