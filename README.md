@@ -18,7 +18,7 @@
 - Filters items by ID and/or NBT data (SNBT[^snbt] format).
 - Multiple views: `detailed` (ID+NBT), `by-id`, `by-nbt`.
 - Optional summaries: per-dimension, per-data-type, per-source (tree view).
-- Output formats: Formatted tables (JSON output planned for the future).
+- Output formats: Formatted tables, JSON, and pretty JSON.
 - Parallel processing for efficient scanning of large worlds.
 - User-friendly player UUID to name resolution using `usercache.json`.
 
@@ -31,15 +31,16 @@ nbt-sniffer --world-path <WORLD_PATH> --all [OPTIONS]
 
 ### Key Options:
 
-- `<WORLD_PATH>`: (Required) Path to the Minecraft world directory.
+- `-w, --world-path <WORLD_PATH>`: (Required) Path to the Minecraft world directory.
 - `--all`: Scan for all items.
-- `--item <ITEM_ID[{NBT_DATA}]>`: Specify item(s) to scan for (e.g., `minecraft:diamond`, `'minecraft:stone{components:{"minecraft:custom_data":{some_tag:1b}}}'`).
-- `--view <MODE>`: Set the output view. Options: `by-id` (default), `by-nbt`, `detailed`.
+- `-i, --item <ITEM_ID[{NBT_DATA}]>`: Specify item(s) to scan for (e.g., `minecraft:diamond`, `'minecraft:stone{components:{"minecraft:custom_data":{some_tag:1b}}}'`).
+- `-v, --view <MODE>`: Set the output view. Options: `by-id` (default), `by-nbt`, `detailed`.
 - `--show-nbt`: When `--per-source-summary` is active, this flag includes the NBT data for each item within the generated tree view. It does not affect other views.
 - `--per-source-summary`: Display a tree summary showing where items are found.
 - `--per-dimension-summary`: Display a summary of items found per dimension.
 - `--per-data-type-summary`: Display a summary of items per data type (Block Entity, Entity, Player).
-- `-v, --verbose`: Enable verbose output for more detailed logging.
+- `-f, --format <FORMAT>`: Specify the output format. Options: `table` (default), `json`, `pretty-json`.
+- `--verbose`: Enable verbose output for more detailed logging.
 
 ### Examples
 
@@ -58,8 +59,15 @@ nbt-sniffer --world-path <WORLD_PATH> --all [OPTIONS]
     _Note: SNBT often requires careful quoting, especially for custom names represented as JSON strings within NBT._
 
 3.  **Find all enchanted books with the Mending enchantment:**
+
     ```bash
     nbt-sniffer --world-path /path/to/your/world --item 'minecraft:enchanted_book{components:{"minecraft:stored_enchantments":{"minecraft:mending":1}}}'
+    ```
+
+4.  **Count all items and output as pretty-printed JSON:**
+
+    ```bash
+    nbt-sniffer --world-path /path/to/your/world --all --format pretty-json
     ```
 
 ---
