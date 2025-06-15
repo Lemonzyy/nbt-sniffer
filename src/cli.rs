@@ -5,7 +5,7 @@ use valence_nbt::Value;
 
 /// Count items in a Minecraft world, with optional per-item NBT filters and coordinates
 #[derive(Parser, Debug)]
-#[command(group(ArgGroup::new("mode").args(["all", "items"]).required(true)))]
+#[command(version, group(ArgGroup::new("mode").args(["all", "items"]).required(true)))]
 pub struct CliArgs {
     #[arg(short, long, value_name = "PATH")]
     pub world_path: PathBuf,
