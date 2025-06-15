@@ -26,7 +26,7 @@ pub struct CliArgs {
     pub items: Vec<String>,
 
     /// Which summary format to display.
-    #[arg(long, value_enum, default_value_t = ViewMode::ById)]
+    #[arg(short, long, value_enum, default_value_t = ViewMode::ById)]
     pub view: ViewMode,
 
     /// Show full NBT data in item summaries
@@ -46,12 +46,16 @@ pub struct CliArgs {
     pub per_data_type_summary: bool,
 
     /// Increase output verbosity
-    #[arg(short, long)]
+    #[arg(long)]
     pub verbose: bool,
+
+    /// Specify the output format
+    #[arg(short, long, value_enum, default_value_t = OutputFormat::Table)]
+    pub format: OutputFormat,
 }
 
 /// Which summary‐format to display.
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug, ValueEnum, PartialEq, Eq)]
 pub enum ViewMode {
     /// List every distinct (ID, NBT) combination
     Detailed,
@@ -61,6 +65,20 @@ pub enum ViewMode {
 
     /// Summarize counts by NBT only
     ByNbt,
+}
+
+/// Which output format to use for the summary tables.
+#[derive(Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub enum OutputFormat {
+    Table,
+    Json,
+    PrettyJson,
+}
+
+impl OutputFormat {
+    pub fn is_json(&self) -> bool {
+        matches!(self, OutputFormat::Json | OutputFormat::PrettyJson)
+    }
 }
 
 /// Represents a query for an item and its optional NBT filters
